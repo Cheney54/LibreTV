@@ -1,4 +1,4 @@
-name: Build LibreTV image
+name: Build 相亲相爱一家人 image
 
 on:
   workflow_run:
@@ -9,9 +9,9 @@ on:
 
 jobs:
   build:
-    name: Build LibreTV image
+    name: Build 相亲相爱一家人 image
     runs-on: ubuntu-latest
-    if: (github.event.workflow_run.conclusion == 'success' && github.repository == 'LibreSpark/LibreTV') || (github.repository == 'bestZwei/libretv')
+    if: (github.event.workflow_run.conclusion == 'success' && github.repository == 'LibreSpark/相亲相爱一家人') || (github.repository == 'bestZwei/相亲相爱一家人')
 
     steps:
       - name: Check out repository
@@ -26,12 +26,12 @@ jobs:
       - name: Set Docker image tag based on repository
         id: set-tag
         run: |
-          if [ "${{ github.repository }}" = "LibreSpark/LibreTV" ]; then
-            echo "IMAGE_NAME=libretv" >> $GITHUB_OUTPUT
-            echo "TAGS=${{ secrets.DOCKER_USERNAME }}/libretv:latest,${{ secrets.DOCKER_USERNAME }}/libretv:${{ steps.version.outputs.VERSION }}" >> $GITHUB_OUTPUT
+          if [ "${{ github.repository }}" = "LibreSpark/相亲相爱一家人" ]; then
+            echo "IMAGE_NAME=相亲相爱一家人" >> $GITHUB_OUTPUT
+            echo "TAGS=${{ secrets.DOCKER_USERNAME }}/相亲相爱一家人:latest,${{ secrets.DOCKER_USERNAME }}/相亲相爱一家人:${{ steps.version.outputs.VERSION }}" >> $GITHUB_OUTPUT
           else
-            echo "IMAGE_NAME=libretv-beta" >> $GITHUB_OUTPUT
-            echo "TAGS=${{ secrets.DOCKER_USERNAME }}/libretv-beta:latest" >> $GITHUB_OUTPUT
+            echo "IMAGE_NAME=相亲相爱一家人-beta" >> $GITHUB_OUTPUT
+            echo "TAGS=${{ secrets.DOCKER_USERNAME }}/相亲相爱一家人-beta:latest" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up Docker QEMU
@@ -46,7 +46,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push LibreTV image
+      - name: Build and push 相亲相爱一家人 image
         uses: docker/build-push-action@v6.14.0
         with:
           context: .

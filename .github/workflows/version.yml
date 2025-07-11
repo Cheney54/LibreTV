@@ -8,7 +8,7 @@ on:
 
 jobs:
   bump-version:
-    if: github.repository == 'LibreSpark/LibreTV'
+    if: github.repository == 'LibreSpark/相亲相爱一家人'
     runs-on: ubuntu-latest
     env:
       TZ: 'Asia/Shanghai'

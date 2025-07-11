@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: libretv
+    name: 相亲相爱一家人
     runtime: node
     plan: free
     buildCommand: 'npm install'
