@@ -159,13 +159,35 @@
                         所有视频均来自第三方API接口。如有侵权，请联系相关内容提供方。
                     </p>
                     <div class="mt-2 flex justify-center md:justify-end space-x-4">
-                        <a href="/" class="text-gray-400 hover:text-white text-sm transition-colors">首页</a>
-                        <a href="about.html" class="text-gray-400 hover:text-white text-sm transition-colors">关于我们</a>
-                        <a href="https://www.msf.hk/zh-hant/donate/general?type=one-off" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 text-sm transition-colors">捐赠</a>
+                        <!-- <a href="about.html" class="text-gray-400 hover:text-white text-sm transition-colors">关于我们</a> -->
+                        <a href="javascript:void(0)" onclick="showDonateModal()" class="text-blue-400 hover:text-blue-300 text-sm transition-colors">捐赠</a>
                     </div>
                 </div>
             </div>
         </div>
     </footer>
+    <!-- 捐赠弹框（如已存在则不重复添加） -->
+    <div id="donateModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50">
+        <div class="bg-[#111] p-8 rounded-lg border border-[#333] flex flex-col items-center relative">
+            <button onclick="closeDonateModal()" class="absolute top-2 right-2 text-gray-400 hover:text-white text-2xl transition-colors">&times;</button>
+            <img src="image/2714185efe5fb587d76b8e38c0453639.jpg" alt="捐赠二维码" class="max-w-xs max-h-[60vh] rounded mb-4">
+        </div>
+    </div>
+    <script>
+    function showDonateModal() {
+        var modal = document.getElementById('donateModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+    }
+    function closeDonateModal() {
+        var modal = document.getElementById('donateModal');
+        if (modal) {
+            modal.classList.remove('flex');
+            modal.classList.add('hidden');
+        }
+    }
+    </script>
 </body>
 </html>
