@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>访问日志管理 - 相亲相爱一家人</title>
+    <script src="libs/tailwindcss.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="page-bg text-white">
+    <div class="container mx-auto px-4 py-8">
+        <div class="max-w-6xl mx-auto">
+            <!-- 标题 -->
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold gradient-text mb-2">访问日志管理</h1>
+                <p class="text-gray-400">查看网站访问记录和IP地址</p>
+            </div>
+
+            <!-- 管理员登录 -->
+            <div id="loginSection" class="bg-[#111] p-6 rounded-lg border border-[#333] mb-6">
+                <h2 class="text-xl font-bold mb-4">管理员登录</h2>
+                <div class="space-y-4">
+                    <input type="password" id="adminPassword" placeholder="请输入管理员密码" 
+                           class="w-full bg-[#222] border border-[#333] text-white px-4 py-2 rounded">
+                    <button onclick="login()" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+                        登录
+                    </button>
+                </div>
+            </div>
+
+            <!-- 日志显示区域 -->
+            <div id="logsSection" class="hidden">
+                <!-- 控制按钮 -->
+                <div class="bg-[#111] p-4 rounded-lg border border-[#333] mb-4">
+                    <div class="flex flex-wrap gap-4 items-center justify-between">
+                        <div class="flex gap-2">
+                            <button onclick="refreshLogs()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+                                刷新日志
+                            </button>
+                            <button onclick="exportLogs()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+                                导出日志
+                            </button>
+                            <button onclick="clearLogs()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">
+                                清空日志
+                            </button>
+                        </div>
+                        <div class="text-sm text-gray-400">
+                            总计: <span id="totalLogs">0</span> 条记录
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 日志表格 -->
+                <div class="bg-[#111] rounded-lg border border-[#333] overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-[#222]">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">时间</th>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">IP地址</th>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">页面</th>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">来源</th>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">用户代理</th>
+                                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-300">语言</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logsTableBody">
+                                <!-- 日志数据将在这里动态生成 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 加载状态 -->
+                <div id="loadingState" class="hidden text-center py-8">
+                    <div class="inline-block w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <p class="mt-2 text-gray-400">正在加载日志...</p>
+                </div>
+
+                <!-- 错误状态 -->
+                <div id="errorState" class="hidden text-center py-8">
+                    <p class="text-red-400">加载日志失败，请重试</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let adminToken = '';
+
+        // 管理员登录
+        async function login() {
+            const password = document.getElementById('adminPassword').value;
+            if (!password) {
+                alert('请输入管理员密码');
+                return;
+            }
+
+            // 这里应该调用后端验证密码，暂时使用简单验证
+            adminToken = password; // 实际应该使用JWT等token
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('logsSection').classList.remove('hidden');
+            refreshLogs();
+        }
+
+        // 刷新日志
+        async function refreshLogs() {
+            const loadingState = document.getElementById('loadingState');
+            const errorState = document.getElementById('errorState');
+            const tableBody = document.getElementById('logsTableBody');
+
+            loadingState.classList.remove('hidden');
+            errorState.classList.add('hidden');
+            tableBody.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/get-visit-logs', {
+                    headers: {
+                        'Authorization': `Bearer ${adminToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取日志失败');
+                }
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayLogs(data.logs);
+                    document.getElementById('totalLogs').textContent = data.total;
+                } else {
+                    throw new Error(data.error || '获取日志失败');
+                }
+            } catch (error) {
+                console.error('获取日志失败:', error);
+                errorState.classList.remove('hidden');
+            } finally {
+                loadingState.classList.add('hidden');
+            }
+        }
+
+        // 显示日志
+        function displayLogs(logs) {
+            const tableBody = document.getElementById('logsTableBody');
+            tableBody.innerHTML = '';
+
+            logs.forEach(log => {
+                const row = document.createElement('tr');
+                row.className = 'border-b border-[#333] hover:bg-[#1a1a1a]';
+                
+                const time = new Date(log.timestamp).toLocaleString('zh-CN');
+                const ip = log.ip || 'unknown';
+                const page = log.page || 'unknown';
+                const referrer = log.referrer === 'direct' ? '直接访问' : log.referrer || 'unknown';
+                const userAgent = log.userAgent || 'unknown';
+                const language = log.acceptLanguage || 'unknown';
+
+                row.innerHTML = `
+                    <td class="px-4 py-3 text-sm text-gray-300">${time}</td>
+                    <td class="px-4 py-3 text-sm text-blue-400 font-mono">${ip}</td>
+                    <td class="px-4 py-3 text-sm text-gray-300">${page}</td>
+                    <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" title="${referrer}">${referrer}</td>
+                    <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" title="${userAgent}">${userAgent}</td>
+                    <td class="px-4 py-3 text-sm text-gray-300">${language}</td>
+                `;
+                
+                tableBody.appendChild(row);
+            });
+        }
+
+        // 导出日志
+        function exportLogs() {
+            // 这里可以实现导出功能
+            alert('导出功能开发中...');
+        }
+
+        // 清空日志
+        function clearLogs() {
+            if (confirm('确定要清空所有访问日志吗？此操作不可恢复。')) {
+                // 这里可以实现清空功能
+                alert('清空功能开发中...');
+            }
+        }
+
+        // 页面加载时检查是否已登录
+        document.addEventListener('DOMContentLoaded', function() {
+            // 可以检查localStorage中是否有登录状态
+            const savedToken = localStorage.getItem('adminToken');
+            if (savedToken) {
+                adminToken = savedToken;
+                document.getElementById('loginSection').classList.add('hidden');
+                document.getElementById('logsSection').classList.remove('hidden');
+                refreshLogs();
+            }
+        });
+    </script>
+</body>
+</html> 

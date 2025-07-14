@@ -440,6 +440,29 @@
     <!-- 添加弹窗和URL搜索参数处理脚本 -->
     <script src="js/index-page.js"></script>
 
+    <!-- 访问日志记录脚本 -->
+    <script>
+    // 页面加载时记录访问日志
+    document.addEventListener('DOMContentLoaded', function() {
+        // 延迟记录，避免影响页面加载
+        setTimeout(() => {
+            fetch('/api/log-visit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    page: 'index',
+                    title: document.title
+                })
+            }).catch(error => {
+                // 静默处理错误，不影响用户体验
+                console.log('访问日志记录失败:', error);
+            });
+        }, 2000);
+    });
+    </script>
+
     <!-- 捐赠弹框 -->
     <div id="donateModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50">
         <div class="bg-[#111] p-8 rounded-lg border border-[#333] flex flex-col items-center relative">
