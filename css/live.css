@@ -7,6 +7,9 @@
 }
 
 .live-header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
     height: 64px;
     padding: 0 20px;
     display: flex;
@@ -65,6 +68,11 @@
 .live-player-zone,
 .live-sidebar {
     min-height: 0;
+}
+
+.live-player-zone {
+    position: relative;
+    z-index: 10;
 }
 
 .live-video-wrap {
@@ -275,6 +283,10 @@
     background: rgba(0, 204, 255, 0.08);
 }
 
+.live-channel.active {
+    box-shadow: inset 3px 0 0 #00ccff;
+}
+
 .live-channel-logo {
     width: 34px;
     height: 34px;
@@ -358,13 +370,61 @@
         padding: 12px;
     }
 
+    .live-player-zone {
+        position: sticky;
+        top: 64px;
+        z-index: 20;
+        padding-bottom: 8px;
+        background: linear-gradient(180deg, #0f1622 0%, #0f1622 88%, rgba(15, 22, 34, 0) 100%);
+    }
+
     .live-video-wrap {
         height: auto;
         aspect-ratio: 16 / 9;
         min-height: 190px;
+        max-height: 42vh;
     }
 
     .live-sidebar {
-        min-height: 520px;
+        min-height: 0;
+    }
+
+    .live-channel-list {
+        overflow-y: visible;
+        padding-bottom: 24px;
+    }
+}
+
+@media (max-width: 520px) {
+    .live-header {
+        height: 56px;
+    }
+
+    .live-shell {
+        min-height: calc(100vh - 56px);
+        padding: 8px;
+        gap: 10px;
+    }
+
+    .live-player-zone {
+        top: 56px;
+    }
+
+    .live-video-wrap {
+        min-height: 150px;
+    }
+
+    .live-nowbar {
+        height: 54px;
+        margin-top: 6px;
+        padding: 8px 10px;
+    }
+
+    .live-now-title {
+        font-size: 14px;
+    }
+
+    .live-now-meta {
+        font-size: 12px;
     }
 }

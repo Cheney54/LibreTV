@@ -417,7 +417,7 @@
                 window.AndroidLivePlayer.play(channel.name, getNativePlaybackUrl(channel.url));
                 document.getElementById('livePlayerHint')?.classList.add('hidden');
                 updateFavoriteButton(channel);
-                renderChannelList();
+                updateActiveChannelInList();
                 return;
             } catch (error) {
                 console.warn('原生播放器启动失败，回退网页播放:', error);
@@ -512,7 +512,22 @@
             document.getElementById('livePlayerHint')?.classList.add('hidden');
         }
         updateFavoriteButton(channel);
-        renderChannelList();
+        updateActiveChannelInList();
+    }
+
+    function updateActiveChannelInList() {
+        const list = document.getElementById('channelList');
+        if (!list) return;
+
+        list.querySelectorAll('.live-channel').forEach(button => {
+            const active = button.dataset.url === state.activeChannelUrl;
+            button.classList.toggle('active', active);
+            if (active) {
+                button.setAttribute('aria-current', 'true');
+            } else {
+                button.removeAttribute('aria-current');
+            }
+        });
     }
 
     function getNativePlaybackUrl(url) {
