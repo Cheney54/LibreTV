@@ -1,0 +1,61 @@
+{
+  "defaultSourceId": "vbskycn-ipv4",
+  "sources": [
+    {
+      "id": "vbskycn-ipv4",
+      "name": "国内电视 IPv4",
+      "url": "https://live.zbds.top/tv/iptv4.m3u",
+      "homepage": "https://github.com/vbskycn/iptv",
+      "note": "偏国内频道，包含央视、卫视等，稳定性以实际播放为准。"
+    },
+    {
+      "id": "vbskycn-ipv6",
+      "name": "国内电视 IPv6",
+      "url": "https://live.zbds.top/tv/iptv6.m3u",
+      "homepage": "https://github.com/vbskycn/iptv",
+      "note": "需要网络支持 IPv6，部分宽带或盒子网络可能无法播放。"
+    },
+    {
+      "id": "iptv-org-cn",
+      "name": "公开频道 中国",
+      "url": "https://iptv-org.github.io/iptv/countries/cn.m3u",
+      "homepage": "https://github.com/iptv-org/iptv",
+      "note": "全球公开频道项目中的中国频道列表。"
+    },
+    {
+      "id": "burningc4-ipv4",
+      "name": "央视备用 IPv4",
+      "url": "https://iptv.burningc4.com/TV-IPV4.m3u",
+      "homepage": "https://github.com/BurningC4/Chinese-IPTV",
+      "note": "偏央视和国内频道，IPv4 网络优先尝试。"
+    },
+    {
+      "id": "peterhchina-cctv-v6",
+      "name": "央视备用 V6",
+      "url": "https://peterhchina.github.io/iptv/CCTV-V6.m3u",
+      "homepage": "https://github.com/peterhchina/iptv",
+      "note": "偏央视频道，需要网络支持 IPv6。"
+    },
+    {
+      "id": "peterhchina-cntv-v6",
+      "name": "央视卫视备用 V6",
+      "url": "https://peterhchina.github.io/iptv/CNTV-V6.m3u",
+      "homepage": "https://github.com/peterhchina/iptv",
+      "note": "偏央视和卫视频道，需要网络支持 IPv6。"
+    },
+    {
+      "id": "iptv-org-all",
+      "name": "公开频道 全部",
+      "url": "https://iptv-org.github.io/iptv/index.m3u",
+      "homepage": "https://github.com/iptv-org/iptv",
+      "note": "频道很多，首次加载会慢一些。"
+    },
+    {
+      "id": "free-tv",
+      "name": "公开频道 Free TV",
+      "url": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
+      "homepage": "https://github.com/Free-TV/IPTV",
+      "note": "公开电视频道列表，国内频道数量不一定多。"
+    }
+  ]
+}

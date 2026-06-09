@@ -230,6 +230,10 @@ function processMediaPlaylist(url, content) {
 }
 
 async function processM3u8Content(targetUrl, content, recursionDepth = 0) {
+    if (!content.includes('#EXT-X-')) {
+        return content;
+    }
+
     // 判断是主列表还是媒体列表
     if (content.includes('#EXT-X-STREAM-INF') || content.includes('#EXT-X-MEDIA:')) {
         logDebug(`检测到主播放列表: ${targetUrl} (深度: ${recursionDepth})`);
@@ -246,6 +250,23 @@ async function processMasterPlaylist(url, content, recursionDepth) {
     }
     const baseUrl = getBaseUrl(url);
     const lines = content.split('\n');
+    return lines.map((rawLine) => {
+        const line = rawLine.trim();
+        if (!line) {
+            return rawLine;
+        }
+
+        if (line.startsWith('#')) {
+            return rawLine.replace(/URI="([^"]+)"/g, (match, uri) => {
+                return `URI="${rewriteUrlToProxy(resolveUrl(baseUrl, uri))}"`;
+            });
+        }
+
+        const absoluteUrl = resolveUrl(baseUrl, line);
+        logDebug(`Rewrite master playlist variant: ${line} -> ${absoluteUrl}`);
+        return rewriteUrlToProxy(absoluteUrl);
+    }).join('\n');
+
     let highestBandwidth = -1;
     let bestVariantUrl = '';
 

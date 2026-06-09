@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="same-origin">
+    <title>直播电视 - 相亲相爱一家人</title>
+    <link rel="icon" href="image/logo.png">
+    <link rel="apple-touch-icon" href="image/logo-black.png">
+    <link rel="manifest" href="manifest.json">
+    <script src="libs/tailwindcss.min.js"></script>
+    <script src="libs/hls.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/live.css">
+</head>
+<body class="live-page text-white">
+    <header class="live-header">
+        <a href="index.html" class="live-brand" aria-label="返回首页">
+            <svg class="live-brand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+            </svg>
+            <span class="gradient-text">相亲相爱一家人</span>
+        </a>
+        <nav class="live-nav">
+            <a href="index.html">影视</a>
+            <a href="live.html" class="active">直播电视</a>
+        </nav>
+    </header>
+
+    <main class="live-shell">
+        <section class="live-player-zone" aria-label="直播播放">
+            <div class="live-video-wrap">
+                <video id="liveVideo" class="live-video" controls playsinline webkit-playsinline preload="auto" controlslist="nodownload noplaybackrate"></video>
+                <div id="livePlayerHint" class="live-player-hint">
+                    <div class="live-player-title">选择一个频道开始播放</div>
+                    <div class="live-player-subtitle">如果某个频道打不开，换一个频道或换一个频道列表试试。</div>
+                </div>
+            </div>
+            <div class="live-nowbar">
+                <div class="live-now-info">
+                    <div id="currentChannelName" class="live-now-title">未播放</div>
+                    <div id="currentChannelMeta" class="live-now-meta">请选择频道</div>
+                </div>
+                <button id="favoriteToggle" class="live-icon-btn" type="button" title="收藏频道" aria-label="收藏频道">☆</button>
+            </div>
+        </section>
+
+        <aside class="live-sidebar" aria-label="频道列表">
+            <div class="live-controls">
+                <div class="live-source-row">
+                    <select id="sourceSelect" class="live-select" aria-label="频道列表"></select>
+                    <button id="refreshSource" class="live-small-btn" type="button">刷新</button>
+                </div>
+                <input id="channelSearch" class="live-input" type="search" placeholder="搜索频道，比如 CCTV、卫视、体育" autocomplete="off">
+                <div id="sourceNote" class="live-source-note"></div>
+            </div>
+
+            <div id="groupTabs" class="live-tabs" aria-label="频道分组"></div>
+            <div id="channelStats" class="live-stats">正在加载频道...</div>
+            <div id="channelList" class="live-channel-list"></div>
+
+            <details class="live-import">
+                <summary>添加频道列表地址</summary>
+                <div class="live-import-body">
+                    <input id="customSourceName" class="live-input" type="text" placeholder="名称，例如 我的直播源">
+                    <input id="customSourceUrl" class="live-input" type="url" placeholder="频道列表地址">
+                    <button id="saveCustomSource" class="live-primary-btn" type="button">保存</button>
+                </div>
+            </details>
+        </aside>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/live.js"></script>
+</body>
+</html>

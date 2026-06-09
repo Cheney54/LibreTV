@@ -133,12 +133,31 @@ function processMediaPlaylist(url, content) {
     } return output.join('\n');
 }
 async function processM3u8Content(targetUrl, content, recursionDepth = 0) {
+    if (!content.includes('#EXT-X-')) { return content; }
+
     if (content.includes('#EXT-X-STREAM-INF') || content.includes('#EXT-X-MEDIA:')) { logDebug(`Detected master playlist: ${targetUrl} (Depth: ${recursionDepth})`); return await processMasterPlaylist(targetUrl, content, recursionDepth); }
     logDebug(`Detected media playlist: ${targetUrl} (Depth: ${recursionDepth})`); return processMediaPlaylist(targetUrl, content);
 }
 async function processMasterPlaylist(url, content, recursionDepth) {
     if (recursionDepth > MAX_RECURSION) { throw new Error(`Max recursion depth (${MAX_RECURSION}) exceeded for master playlist: ${url}`); }
     const baseUrl = getBaseUrl(url); const lines = content.split('\n'); let highestBandwidth = -1; let bestVariantUrl = '';
+    return lines.map((rawLine) => {
+        const line = rawLine.trim();
+        if (!line) {
+            return rawLine;
+        }
+
+        if (line.startsWith('#')) {
+            return rawLine.replace(/URI="([^"]+)"/g, (match, uri) => {
+                return `URI="${rewriteUrlToProxy(resolveUrl(baseUrl, uri))}"`;
+            });
+        }
+
+        const absoluteUrl = resolveUrl(baseUrl, line);
+        logDebug(`Rewrite master playlist variant: ${line} -> ${absoluteUrl}`);
+        return rewriteUrlToProxy(absoluteUrl);
+    }).join('\n');
+
     for (let i = 0; i < lines.length; i++) { if (lines[i].startsWith('#EXT-X-STREAM-INF')) { const bandwidthMatch = lines[i].match(/BANDWIDTH=(\d+)/); const currentBandwidth = bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0; let variantUriLine = ''; for (let j = i + 1; j < lines.length; j++) { const line = lines[j].trim(); if (line && !line.startsWith('#')) { variantUriLine = line; i = j; break; } } if (variantUriLine && currentBandwidth >= highestBandwidth) { highestBandwidth = currentBandwidth; bestVariantUrl = resolveUrl(baseUrl, variantUriLine); } } }
     if (!bestVariantUrl) { logDebug(`No BANDWIDTH found, trying first URI in: ${url}`); for (let i = 0; i < lines.length; i++) { const line = lines[i].trim(); if (line && !line.startsWith('#') && line.match(/\.m3u8($|\?.*)/i)) { bestVariantUrl = resolveUrl(baseUrl, line); logDebug(`Fallback: Found first sub-playlist URI: ${bestVariantUrl}`); break; } } }
     if (!bestVariantUrl) { logDebug(`No valid sub-playlist URI found in master: ${url}. Processing as media playlist.`); return processMediaPlaylist(url, content); }

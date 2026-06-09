@@ -295,6 +295,10 @@ export async function onRequest(context) {
 
     // 递归处理 M3U8 内容
      async function processM3u8Content(targetUrl, content, recursionDepth = 0, env) {
+         if (!content.includes('#EXT-X-')) {
+             return content;
+         }
+
          if (content.includes('#EXT-X-STREAM-INF') || content.includes('#EXT-X-MEDIA:')) {
              logDebug(`检测到主播放列表: ${targetUrl}`);
              return await processMasterPlaylist(targetUrl, content, recursionDepth, env);
@@ -311,6 +315,23 @@ export async function onRequest(context) {
 
         const baseUrl = getBaseUrl(url);
         const lines = content.split('\n');
+        return lines.map((rawLine) => {
+            const line = rawLine.trim();
+            if (!line) {
+                return rawLine;
+            }
+
+            if (line.startsWith('#')) {
+                return rawLine.replace(/URI="([^"]+)"/g, (match, uri) => {
+                    return `URI="${rewriteUrlToProxy(resolveUrl(baseUrl, uri))}"`;
+                });
+            }
+
+            const absoluteUrl = resolveUrl(baseUrl, line);
+            logDebug(`Rewrite master playlist variant: ${line} -> ${absoluteUrl}`);
+            return rewriteUrlToProxy(absoluteUrl);
+        }).join('\n');
+
         let highestBandwidth = -1;
         let bestVariantUrl = '';
 
