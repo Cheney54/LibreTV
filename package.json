@@ -7,6 +7,7 @@
   "author": "bestZwei",
   "license": "Apache-2.0",
   "scripts": {
+    "build:edgeone": "node scripts/build-edgeone-static.mjs",
     "dev": "nodemon server.mjs",
     "start": "node server.mjs"
   },
