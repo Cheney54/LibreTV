@@ -27,11 +27,23 @@ public final class ApkUpdateDownloader {
     private static long activeDownloadId = -1L;
     private static BroadcastReceiver downloadReceiver;
     private static ProgressDialog progressDialog;
+    private static String pendingApkUrl;
+    private static String pendingVersionName;
+    private static int pendingVersionCode;
+    private static boolean pendingForceUpdate;
 
     private ApkUpdateDownloader() {
     }
 
-    public static void start(Activity activity, String apkUrl, String versionName) {
+    public static void start(Activity activity, String apkUrl, String versionName, int versionCode, boolean forceUpdate) {
+        pendingApkUrl = apkUrl;
+        pendingVersionName = versionName;
+        pendingVersionCode = versionCode;
+        pendingForceUpdate = forceUpdate;
+        startDownload(activity, apkUrl, versionName);
+    }
+
+    private static void startDownload(Activity activity, String apkUrl, String versionName) {
         if (apkUrl == null || (!apkUrl.startsWith("http://") && !apkUrl.startsWith("https://"))) {
             Toast.makeText(activity, "无效的 APK 地址", Toast.LENGTH_SHORT).show();
             return;
@@ -74,7 +86,16 @@ public final class ApkUpdateDownloader {
             showProgress(activity);
             registerReceiver(activity, dm, target);
         } catch (Exception e) {
-            Toast.makeText(activity, "下载失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            notifyDownloadFailed(activity);
+        }
+    }
+
+    private static void notifyDownloadFailed(Activity activity) {
+        if (pendingApkUrl != null) {
+            UpdateChecker.showDownloadFailedDialog(
+                activity, pendingApkUrl, pendingVersionName, pendingVersionCode, pendingForceUpdate);
+        } else {
+            Toast.makeText(activity, "下载失败，请检查网络", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -116,12 +137,11 @@ public final class ApkUpdateDownloader {
                             installApk(activity, localUri, targetFile);
                             return;
                         }
-                        int reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
-                        Toast.makeText(activity, "下载失败，代码: " + reason, Toast.LENGTH_LONG).show();
+                        notifyDownloadFailed(activity);
                         return;
                     }
                 }
-                Toast.makeText(activity, "下载失败", Toast.LENGTH_SHORT).show();
+                notifyDownloadFailed(activity);
             }
         };
         activity.registerReceiver(downloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
@@ -165,7 +185,7 @@ public final class ApkUpdateDownloader {
             }
         }
         if (apkFile == null || !apkFile.exists()) {
-            Toast.makeText(activity, "安装包不存在", Toast.LENGTH_SHORT).show();
+            notifyDownloadFailed(activity);
             return;
         }
         try {

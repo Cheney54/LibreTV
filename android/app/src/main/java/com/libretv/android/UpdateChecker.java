@@ -90,16 +90,35 @@ public final class UpdateChecker {
             .setTitle("发现新版本")
             .setMessage(message)
             .setCancelable(!info.forceUpdate)
-            .setPositiveButton("立即更新", (d, w) -> ApkUpdateDownloader.start(activity, info.apkUrl, info.versionName));
+            .setPositiveButton("立即更新", (d, w) -> ApkUpdateDownloader.start(
+                activity, info.apkUrl, info.versionName, info.versionCode, info.forceUpdate));
 
         if (!info.forceUpdate) {
-            builder.setNegativeButton("稍后再说", (d, w) -> {
-                activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putInt(KEY_SKIP_CODE, info.versionCode)
-                    .apply();
-            });
+            builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, info.versionCode));
         }
+        builder.show();
+    }
+
+    /** 用户选择跳过该版本（网络差或暂不升级） */
+    static void skipVersion(Activity activity, int versionCode) {
+        activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_SKIP_CODE, versionCode)
+            .apply();
+    }
+
+    static void showDownloadFailedDialog(Activity activity, String apkUrl, String versionName, int versionCode, boolean forceUpdate) {
+        if (activity.isFinishing()) {
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
+            .setTitle("更新失败")
+            .setMessage("下载未完成，可能是网络不稳定。请换网络后重试，或稍后再更新。")
+            .setPositiveButton("重试", (d, w) -> ApkUpdateDownloader.start(activity, apkUrl, versionName, versionCode, forceUpdate));
+        if (!forceUpdate) {
+            builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, versionCode));
+        }
+        builder.setCancelable(!forceUpdate);
         builder.show();
     }
 

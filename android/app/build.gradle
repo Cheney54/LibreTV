@@ -10,8 +10,8 @@ android {
         applicationId "com.libretv.android"
         minSdk 23
         targetSdk 35
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 3
+        versionName "1.2.0"
         // 由 publish-android-release.ps1 写入 releases/update-check-url.txt 后，重新打包即生效
         def updateCheckUrl = "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/app-update.json"
         def updateUrlFile = file("${rootProject.projectDir}/releases/update-check-url.txt")

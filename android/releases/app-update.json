@@ -1,9 +1,9 @@
 ﻿{
-    "versionCode":  2,
-    "versionName":  "1.1.0",
-    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.1.0.apk",
-    "changelog":  "Version 1.1.0: native VOD, in-app update from GitHub",
+    "versionCode":  3,
+    "versionName":  "1.2.0",
+    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.2.0.apk",
+    "changelog":  "1.2.0: sync config.js; update dialog Skip later; retry on download fail",
     "forceUpdate":  false,
-    "minVersionCode":  2
+    "minVersionCode":  3
 }
 
