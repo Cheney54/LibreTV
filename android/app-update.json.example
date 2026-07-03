@@ -1,0 +1,8 @@
+{
+  "versionCode": 2,
+  "versionName": "1.1.0",
+  "apkUrl": "https://your-server.com/releases/libretv-1.1.0.apk",
+  "changelog": "1. 点播原生 ExoPlayer\n2. 应用内检查更新\n3. 修复播放卡顿",
+  "forceUpdate": false,
+  "minVersionCode": 1
+}

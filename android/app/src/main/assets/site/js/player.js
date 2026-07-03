@@ -91,8 +91,141 @@ let shortcutHintTimeout = null; // 用于控制快捷键提示显示时间
 let adFilteringEnabled = true; // 默认开启广告过滤
 let progressSaveInterval = null; // 定期保存进度的计时器
 let currentVideoUrl = ''; // 记录当前实际的视频URL
+let androidNativeVodActive = false;
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
+
+function getNativePlaybackUrl(url) {
+    if (!url) return url;
+    if (url.startsWith('/proxy/')) {
+        try {
+            return decodeURIComponent(url.slice('/proxy/'.length));
+        } catch {
+            return url;
+        }
+    }
+    if (/^https?:\/\//i.test(url)) {
+        return url;
+    }
+    return url;
+}
+
+function getWebProxyPlaybackUrl(url) {
+    if (!url) return url;
+    if (url.startsWith('/proxy/')) return url;
+    if (typeof PROXY_URL !== 'undefined' && /^https?:\/\//i.test(url)) {
+        return PROXY_URL + encodeURIComponent(url);
+    }
+    return url;
+}
+
+/** ExoPlayer 直连源站（与直播相同），不经 WebView /proxy 拦截 */
+function resolveAndroidVodPlayUrl(url) {
+    const decoded = getNativePlaybackUrl(url);
+    if (/^https?:\/\//i.test(decoded)) {
+        return decoded;
+    }
+    if (/^https?:\/\//i.test(url)) {
+        return url;
+    }
+    return decoded;
+}
+
+function getAndroidVodStartPositionSec() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const fromUrl = parseInt(urlParams.get('position') || '0', 10);
+    if (fromUrl > 10) {
+        return fromUrl;
+    }
+    try {
+        const progressKey = 'videoProgress_' + getVideoId();
+        const progressStr = localStorage.getItem(progressKey);
+        if (progressStr) {
+            const progress = JSON.parse(progressStr);
+            if (progress && typeof progress.position === 'number' && progress.position > 10) {
+                return progress.position;
+            }
+        }
+    } catch (e) {
+        /* ignore */
+    }
+    return 0;
+}
+
+function teardownWebPlayerForNativeVod() {
+    destroyNextEpisodePrefetch();
+    if (progressSaveInterval) {
+        clearInterval(progressSaveInterval);
+        progressSaveInterval = null;
+    }
+    if (art) {
+        stopGlfxEnhancement();
+        art.destroy();
+        art = null;
+    }
+    if (currentHls && currentHls.destroy) {
+        try {
+            currentHls.destroy();
+        } catch (e) {
+            /* ignore */
+        }
+        currentHls = null;
+    }
+}
+
+function tryPlayAndroidNativeVod(videoUrl) {
+    const bridge = window.AndroidVodPlayer;
+    if (!bridge || typeof bridge.play !== 'function') {
+        return false;
+    }
+
+    const playUrl = resolveAndroidVodPlayUrl(videoUrl);
+    if (bridge.supportsUrl && !bridge.supportsUrl(playUrl)) {
+        return false;
+    }
+
+    teardownWebPlayerForNativeVod();
+    androidNativeVodActive = true;
+
+    const loading = document.getElementById('player-loading');
+    if (loading) {
+        loading.style.display = 'none';
+    }
+    const err = document.getElementById('error');
+    if (err) {
+        err.style.display = 'none';
+    }
+
+    const startSec = getAndroidVodStartPositionSec();
+    const title = currentVideoTitle || '点播';
+
+    try {
+        bridge.play(title, playUrl, startSec);
+    } catch (e) {
+        androidNativeVodActive = false;
+        console.warn('Android 原生点播失败，回退 WebView:', e);
+        return false;
+    }
+
+    setTimeout(() => saveToHistory(), 3000);
+    return true;
+}
+
+window.__onNativeVodEnded = function () {
+    if (!androidNativeVodActive) {
+        return;
+    }
+    androidNativeVodActive = false;
+    videoHasEnded = true;
+    clearVideoProgress();
+
+    if (autoplayEnabled && currentEpisodeIndex < currentEpisodes.length - 1) {
+        setTimeout(() => {
+            playNextEpisode();
+            videoHasEnded = false;
+        }, 800);
+    }
+};
 
 // 页面加载
 document.addEventListener('DOMContentLoaded', function () {
@@ -456,6 +589,110 @@ function getHighestHlsLevelIndex(hls) {
     }, 0);
 }
 
+/** 最低码率档位，用于首帧尽快起播 */
+function getLowestHlsLevelIndex(hls) {
+    if (!hls || !Array.isArray(hls.levels) || hls.levels.length === 0) {
+        return -1;
+    }
+
+    return hls.levels.reduce((bestIndex, level, index) => {
+        const best = hls.levels[bestIndex];
+        const bestHeight = best.height || 99999;
+        const levelHeight = level.height || 99999;
+        const bestBitrate = best.bitrate || best.averageBitrate || 999999999;
+        const levelBitrate = level.bitrate || level.averageBitrate || 999999999;
+
+        if (levelHeight < bestHeight) return index;
+        if (levelHeight === bestHeight && levelBitrate < bestBitrate) return index;
+        return bestIndex;
+    }, 0);
+}
+
+/** 点播 HLS：极限缓冲 + 分片预取（不限制内存/流量） */
+function buildVodHlsConfig() {
+    return {
+        debug: false,
+        loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
+        enableWorker: true,
+        lowLatencyMode: false,
+        startFragPrefetch: true,
+        backBufferLength: Infinity,
+        maxBufferLength: 600,
+        maxMaxBufferLength: 7200,
+        maxBufferSize: 2 * 1024 * 1024 * 1024,
+        maxBufferHole: 0.2,
+        maxStarvationDelay: 8,
+        maxLoadingDelay: 8,
+        maxFragLookUpTolerance: 0.25,
+        nudgeOffset: 0.05,
+        nudgeMaxRetry: 20,
+        fragLoadingMaxRetry: 12,
+        fragLoadingMaxRetryTimeout: 120000,
+        fragLoadingRetryDelay: 200,
+        manifestLoadingMaxRetry: 8,
+        manifestLoadingRetryDelay: 200,
+        levelLoadingMaxRetry: 10,
+        levelLoadingRetryDelay: 200,
+        startLevel: 0,
+        testBandwidth: false,
+        abrEwmaDefaultEstimate: 50000000,
+        abrBandWidthFactor: 0.99,
+        abrBandWidthUpFactor: 0.99,
+        abrMaxWithRealBitrate: true,
+        stretchShortVideoTrack: true,
+        appendErrorMaxRetry: 12,
+        liveDurationInfinity: false
+    };
+}
+
+let nextEpisodePrefetchHls = null;
+
+function destroyNextEpisodePrefetch() {
+    if (nextEpisodePrefetchHls) {
+        try {
+            nextEpisodePrefetchHls.destroy();
+        } catch (e) {
+            /* ignore */
+        }
+        nextEpisodePrefetchHls = null;
+    }
+}
+
+/** 后台预拉下一集 m3u8 与分片，切集更快 */
+function prefetchNextEpisode() {
+    destroyNextEpisodePrefetch();
+    const nextIndex = currentEpisodeIndex + 1;
+    if (nextIndex >= currentEpisodes.length) {
+        return;
+    }
+    const nextUrl = currentEpisodes[nextIndex];
+    if (!nextUrl) {
+        return;
+    }
+
+    try {
+        const cfg = buildVodHlsConfig();
+        const hls = new Hls(cfg);
+        nextEpisodePrefetchHls = hls;
+        hls.loadSource(nextUrl);
+        hls.attachMedia(document.createElement('video'));
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+            const low = getLowestHlsLevelIndex(hls);
+            if (low > -1) {
+                hls.currentLevel = low;
+            }
+            hls.startLoad(0);
+        });
+        hls.on(Hls.Events.ERROR, function (_, data) {
+            if (data.fatal) {
+                destroyNextEpisodePrefetch();
+            }
+        });
+    } catch (e) {
+        destroyNextEpisodePrefetch();
+    }
+}
+
 function updateHlsQualitySetting(hls) {
     if (!art || !art.setting || !hls || !Array.isArray(hls.levels) || hls.levels.length === 0) {
         return;
@@ -717,6 +954,13 @@ function initPlayer(videoUrl) {
         return
     }
 
+    if (tryPlayAndroidNativeVod(videoUrl)) {
+        return;
+    }
+    androidNativeVodActive = false;
+
+    destroyNextEpisodePrefetch();
+
     // 销毁旧实例
     if (art) {
         stopGlfxEnhancement();
@@ -724,35 +968,7 @@ function initPlayer(videoUrl) {
         art = null;
     }
 
-    // 配置HLS.js选项
-    const hlsConfig = {
-        debug: false,
-        loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 90,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 30 * 1000 * 1000,
-        maxBufferHole: 0.5,
-        fragLoadingMaxRetry: 6,
-        fragLoadingMaxRetryTimeout: 64000,
-        fragLoadingRetryDelay: 1000,
-        manifestLoadingMaxRetry: 3,
-        manifestLoadingRetryDelay: 1000,
-        levelLoadingMaxRetry: 4,
-        levelLoadingRetryDelay: 1000,
-        startLevel: -1,
-        testBandwidth: false,
-        abrEwmaDefaultEstimate: 5000000,
-        abrBandWidthFactor: 0.98,
-        abrBandWidthUpFactor: 0.9,
-        abrMaxWithRealBitrate: true,
-        stretchShortVideoTrack: true,
-        appendErrorMaxRetry: 5,  // 增加尝试次数
-        liveSyncDurationCount: 3,
-        liveDurationInfinity: false
-    };
+    const hlsConfig = buildVodHlsConfig();
 
     // Create new ArtPlayer instance
     art = new Artplayer({
@@ -787,6 +1003,7 @@ function initPlayer(videoUrl) {
         lang: navigator.language.toLowerCase(),
         moreVideoAttr: {
             crossOrigin: 'anonymous',
+            preload: 'auto',
         },
         customType: {
             m3u8: function (video, url) {
@@ -810,6 +1027,8 @@ function initPlayer(videoUrl) {
                 let playbackStarted = false;
                 // 跟踪视频是否出现bufferAppendError
                 let bufferAppendErrorCount = 0;
+                let upgradedToMaxQuality = false;
+                let waitingRecoverTimer = null;
 
                 // 监听视频播放事件
                 video.addEventListener('playing', function () {
@@ -817,6 +1036,16 @@ function initPlayer(videoUrl) {
                     document.getElementById('player-loading').style.display = 'none';
                     document.getElementById('error').style.display = 'none';
                     applyQualityEnhancement();
+
+                    if (!upgradedToMaxQuality) {
+                        upgradedToMaxQuality = true;
+                        const highestLevel = getHighestHlsLevelIndex(hls);
+                        if (highestLevel > -1 && hls.currentLevel !== highestLevel) {
+                            hls.currentLevel = highestLevel;
+                            updateHlsQualitySetting(hls);
+                        }
+                    }
+                    prefetchNextEpisode();
                 });
 
                 // 监听视频进度事件
@@ -829,6 +1058,36 @@ function initPlayer(videoUrl) {
 
                 hls.loadSource(url);
                 hls.attachMedia(video);
+
+                video.addEventListener('waiting', function onWaiting() {
+                    if (video.paused || !hls) {
+                        return;
+                    }
+                    let ahead = 0;
+                    if (video.buffered.length > 0) {
+                        ahead = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+                    }
+                    if (ahead > 8) {
+                        return;
+                    }
+                    clearTimeout(waitingRecoverTimer);
+                    waitingRecoverTimer = setTimeout(() => {
+                        try {
+                            if (video.paused || !hls) {
+                                return;
+                            }
+                            let bufferedAhead = 0;
+                            if (video.buffered.length > 0) {
+                                bufferedAhead = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+                            }
+                            if (bufferedAhead < 3) {
+                                hls.startLoad(video.currentTime);
+                            }
+                        } catch (e) {
+                            /* ignore */
+                        }
+                    }, 300);
+                });
 
                 // enable airplay, from https://github.com/video-dev/hls.js/issues/5989
                 // 检查是否已存在source元素，如果存在则更新，不存在则创建
@@ -845,13 +1104,13 @@ function initPlayer(videoUrl) {
                 video.disableRemotePlayback = false;
 
                 hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                    const highestLevel = getHighestHlsLevelIndex(hls);
-                    if (highestLevel > -1) {
-                        hls.currentLevel = highestLevel;
+                    const lowestLevel = getLowestHlsLevelIndex(hls);
+                    if (lowestLevel > -1) {
+                        hls.currentLevel = lowestLevel;
                     }
                     updateHlsQualitySetting(hls);
-                    video.play().catch(e => {
-                    });
+                    hls.startLoad(0);
+                    video.play().catch(() => {});
                 });
 
                 hls.on(Hls.Events.ERROR, function (event, data) {
@@ -1259,7 +1518,7 @@ function playEpisode(index) {
     currentUrl.searchParams.delete('position');
     window.history.replaceState({}, '', currentUrl.toString());
 
-    if (isWebkit) {
+    if (isWebkit || window.AndroidVodPlayer || !art) {
         initPlayer(url);
     } else {
         art.switch = url;

@@ -176,6 +176,15 @@
                 </div>
             </div>
 
+            <!-- Android App 更新（仅 APK 内显示） -->
+            <div id="androidAppUpdateSection" class="p-3 bg-[#151515] rounded-lg shadow-inner hidden">
+                <label class="block text-sm font-medium text-gray-400 mb-2 border-b border-[#333] pb-1">应用更新</label>
+                <p id="androidAppVersionText" class="text-xs text-gray-500 mb-3"></p>
+                <button type="button" id="androidCheckUpdateBtn" class="hidden px-4 py-2 w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-sm transition-all shadow-md">
+                    检查 App 更新
+                </button>
+            </div>
+
             <!-- 一般功能区域 -->
             <div class="p-3 bg-[#151515] rounded-lg shadow-inner">
                 <label class="block text-sm font-medium text-gray-400 mb-3 border-b border-[#333] pb-1">一般功能</label>
@@ -425,6 +434,7 @@
     <script src="js/password.js"></script>
     <script src="js/search.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/android-app-update.js"></script>
 
     <!-- PWA 注册 -->
     <script src="js/pwa-register.js"></script>

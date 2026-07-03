@@ -1,0 +1,9 @@
+﻿{
+    "versionCode":  1,
+    "versionName":  "1.0.0",
+    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.0.0.apk",
+    "changelog":  "In-app update, native VOD player, releases on Git",
+    "forceUpdate":  false,
+    "minVersionCode":  1
+}
+

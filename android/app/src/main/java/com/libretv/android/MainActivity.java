@@ -18,6 +18,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
@@ -53,8 +54,12 @@ public class MainActivity extends Activity {
     private FrameLayout rootLayout;
     private PlayerView nativePlayerView;
     private ExoPlayer nativePlayer;
-    private String nativeLiveUrl;
+  private String nativeLiveUrl;
     private int nativeRetryCount;
+    private boolean nativeVodMode;
+    private long nativeStartPositionMs;
+    private boolean nativeEndHandled;
+    private boolean nativeSeekApplied;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +80,7 @@ public class MainActivity extends Activity {
         configureNativePlayer();
         enterImmersiveMode();
         webView.loadUrl(LOCAL_ORIGIN + "/index.html");
+        webView.postDelayed(() -> UpdateChecker.checkOnLaunch(this), 2500);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -98,17 +104,41 @@ public class MainActivity extends Activity {
         chromeClient = new LibreTvChromeClient();
         webView.setWebChromeClient(chromeClient);
         webView.addJavascriptInterface(new AndroidLivePlayerBridge(), "AndroidLivePlayer");
+        webView.addJavascriptInterface(new AndroidVodPlayerBridge(), "AndroidVodPlayer");
+        webView.addJavascriptInterface(new AndroidAppUpdateBridge(), "AndroidAppUpdate");
+    }
+
+    private class AndroidAppUpdateBridge {
+        @JavascriptInterface
+        public String getAppVersion() {
+            return BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")";
+        }
+
+        @JavascriptInterface
+        public boolean isUpdateEnabled() {
+            return BuildConfig.UPDATE_CHECK_URL != null && !BuildConfig.UPDATE_CHECK_URL.isEmpty();
+        }
+
+        @JavascriptInterface
+        public void checkForUpdate() {
+            runOnUiThread(() -> UpdateChecker.checkManual(MainActivity.this, (ok, message) -> {
+                if (!ok || (message != null && message.contains("已是最新"))) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                }
+            }));
+        }
     }
 
     private void configureNativePlayer() {
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                60_000,
-                300_000,
-                3_000,
-                8_000
+                120_000,
+                3_600_000,
+                5_000,
+                15_000
             )
-            .setBackBuffer(120_000, true)
+            .setBackBuffer(300_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
             .build();
 
         nativePlayer = new ExoPlayer.Builder(this)
@@ -119,6 +149,21 @@ public class MainActivity extends Activity {
             @Override
             public void onPlayerError(PlaybackException error) {
                 retryNativePlayback();
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (!nativeVodMode || nativePlayer == null) {
+                    return;
+                }
+                if (playbackState == Player.STATE_READY && !nativeSeekApplied && nativeStartPositionMs > 0) {
+                    nativeSeekApplied = true;
+                    nativePlayer.seekTo(nativeStartPositionMs);
+                }
+                if (playbackState == Player.STATE_ENDED && !nativeEndHandled) {
+                    nativeEndHandled = true;
+                    notifyNativeVodEnded();
+                }
             }
         });
 
@@ -156,7 +201,7 @@ public class MainActivity extends Activity {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (nativePlayerView != null && nativePlayerView.getVisibility() == View.VISIBLE) {
-                hideNativePlayer();
+                hideNativePlayer(true);
                 return true;
             }
             if (customView != null) {
@@ -183,15 +228,40 @@ public class MainActivity extends Activity {
     private class AndroidLivePlayerBridge {
         @JavascriptInterface
         public void play(String title, String url) {
-            runOnUiThread(() -> showNativePlayer(url));
+            runOnUiThread(() -> showNativePlayer(url, false, 0));
         }
     }
 
-    private void showNativePlayer(String url) {
+    private class AndroidVodPlayerBridge {
+        @JavascriptInterface
+        public boolean supportsUrl(String url) {
+            if (url == null) {
+                return false;
+            }
+            String lower = url.toLowerCase(Locale.ROOT);
+            return lower.contains(".m3u8") || lower.contains("mpegurl");
+        }
+
+        @JavascriptInterface
+        public void play(String title, String url, double startPositionSec) {
+            runOnUiThread(() -> showNativePlayer(url, true, (long) (startPositionSec * 1000)));
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            runOnUiThread(() -> hideNativePlayer(false));
+        }
+    }
+
+    private void showNativePlayer(String url, boolean vod, long startPositionMs) {
         if (url == null || (!url.startsWith("http://") && !url.startsWith("https://"))) {
             return;
         }
 
+        nativeVodMode = vod;
+        nativeStartPositionMs = vod ? Math.max(0, startPositionMs) : 0;
+        nativeSeekApplied = nativeStartPositionMs <= 0;
+        nativeEndHandled = false;
         nativeLiveUrl = url;
         nativeRetryCount = 0;
         nativePlayerView.setVisibility(View.VISIBLE);
@@ -237,16 +307,42 @@ public class MainActivity extends Activity {
         }, Math.min(15_000, 2_000L * nativeRetryCount));
     }
 
-    private void hideNativePlayer() {
+    private void hideNativePlayer(boolean returnToWeb) {
         if (nativePlayer != null) {
             nativePlayer.stop();
             nativePlayer.clearMediaItems();
         }
         nativeLiveUrl = null;
         nativeRetryCount = 0;
+        nativeVodMode = false;
+        nativeStartPositionMs = 0;
+        nativeEndHandled = false;
+        nativeSeekApplied = false;
         nativePlayerView.setVisibility(View.GONE);
-        webView.setVisibility(View.VISIBLE);
-        enterImmersiveMode();
+        if (returnToWeb) {
+            webView.setVisibility(View.VISIBLE);
+            enterImmersiveMode();
+        }
+    }
+
+    private void notifyNativeVodEnded() {
+        runOnUiThread(() -> {
+            hideNativePlayer(false);
+            webView.setVisibility(View.VISIBLE);
+            webView.evaluateJavascript("window.__onNativeVodEnded && window.__onNativeVodEnded();", null);
+            enterImmersiveMode();
+        });
+    }
+
+    private static String escapeJsString(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r");
     }
 
     private class LibreTvChromeClient extends WebChromeClient {

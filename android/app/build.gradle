@@ -12,10 +12,23 @@ android {
         targetSdk 35
         versionCode 1
         versionName "1.0.0"
+        // 由 publish-android-release.ps1 写入 releases/update-check-url.txt 后，重新打包即生效
+        def updateCheckUrl = "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/app-update.json"
+        def updateUrlFile = file("${rootProject.projectDir}/releases/update-check-url.txt")
+        if (updateUrlFile.exists()) {
+            updateCheckUrl = updateUrlFile.text.trim()
+        }
+        updateCheckUrl = updateCheckUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField "String", "UPDATE_CHECK_URL", "\"${updateCheckUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 }
 
 dependencies {
+    implementation "androidx.core:core:1.13.1"
     implementation "androidx.media3:media3-exoplayer:1.4.1"
     implementation "androidx.media3:media3-exoplayer-hls:1.4.1"
     implementation "androidx.media3:media3-ui:1.4.1"
