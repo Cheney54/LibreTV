@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -33,8 +34,16 @@ public final class UpdateChecker {
             return;
         }
         EXECUTOR.execute(() -> {
-            UpdateInfo info = fetchUpdateInfo();
+            UpdateInfo info = fetchUpdateInfo(false);
             if (info == null) {
+                MAIN.post(() -> {
+                    try {
+                        if (activity.isFinishing() || activity.isDestroyed()) return;
+                        Toast.makeText(activity.getApplicationContext(),
+                            "更新检查失败（GitHub 限流 / 网络不稳定），稍后将自动重试",
+                            Toast.LENGTH_SHORT).show();
+                    } catch (Throwable ignore) {}
+                });
                 return;
             }
             int current = BuildConfig.VERSION_CODE;
@@ -51,21 +60,47 @@ public final class UpdateChecker {
 
     public static void checkManual(Activity activity, ManualCheckCallback callback) {
         if (TextUtils.isEmpty(BuildConfig.UPDATE_CHECK_URL)) {
-            MAIN.post(() -> callback.onResult(false, "未配置更新地址，请在 app/build.gradle 设置 UPDATE_CHECK_URL"));
+            MAIN.post(() -> {
+                String msg = "未配置更新地址，请在 app/build.gradle 设置 UPDATE_CHECK_URL";
+                Toast.makeText(activity, msg, Toast.LENGTH_LONG).show();
+                callback.onResult(false, msg);
+            });
             return;
         }
         EXECUTOR.execute(() -> {
-            UpdateInfo info = fetchUpdateInfo();
+            UpdateInfo info = fetchUpdateInfo(true);
             if (info == null) {
-                MAIN.post(() -> callback.onResult(false, "无法获取更新信息：可能网络不可用，或 GitHub 访问限流（429），请稍后再试"));
+                MAIN.post(() -> {
+                    try {
+                        if (activity.isFinishing() || activity.isDestroyed()) return;
+                        Toast.makeText(activity,
+                            "无法获取更新信息：网络不可用 / GitHub 限流（429）/ 当前网络需稍后重试",
+                            Toast.LENGTH_LONG).show();
+                    } catch (Throwable ignore) {}
+                    callback.onResult(false, "无法获取更新信息：可能网络不可用，或 GitHub 访问限流（429），请稍后再试");
+                });
                 return;
             }
             int current = BuildConfig.VERSION_CODE;
             if (info.versionCode <= current) {
-                MAIN.post(() -> callback.onResult(true, "当前已是最新版本 " + BuildConfig.VERSION_NAME));
+                MAIN.post(() -> {
+                    if (activity.isFinishing() || activity.isDestroyed()) {
+                        callback.onResult(false, "Activity 已关闭");
+                        return;
+                    }
+                    showNoUpdateDialog(activity);
+                    String msg = "当前已是最新版本 " + BuildConfig.VERSION_NAME + "（" + BuildConfig.VERSION_CODE + "）";
+                    callback.onResult(true, msg);
+                });
                 return;
             }
             MAIN.post(() -> {
+                if (activity.isFinishing() || activity.isDestroyed()) {
+                    callback.onResult(false, "Activity 已关闭");
+                    return;
+                }
+                String msg = "发现新版本 " + info.versionName + "（" + info.versionCode + "），已为您打开更新窗口";
+                Toast.makeText(activity, msg, Toast.LENGTH_LONG).show();
                 showUpdateDialog(activity, info, true);
                 callback.onResult(true, "发现新版本 " + info.versionName);
             });
@@ -74,7 +109,7 @@ public final class UpdateChecker {
 
     private static void showUpdateDialog(Activity activity, UpdateInfo info, boolean fromManual) {
         if (activity.isFinishing()) {
-            return;
+            try { if (activity.isDestroyed()) return; } catch (Throwable ignore) {}
         }
         String sizeText = "";
         if (info.apkSize > 0) {
@@ -96,7 +131,11 @@ public final class UpdateChecker {
                 info.forceUpdate, info.apkSize, info.sha256));
 
         if (!info.forceUpdate) {
-            builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, info.versionCode));
+            if (fromManual) {
+                builder.setNegativeButton("取消", (d, w) -> d.dismiss());
+            } else {
+                builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, info.versionCode));
+            }
         }
         builder.show();
     }
@@ -106,6 +145,21 @@ public final class UpdateChecker {
             .edit()
             .putInt(KEY_SKIP_CODE, versionCode)
             .apply();
+    }
+
+    private static void showNoUpdateDialog(Activity activity) {
+        if (activity.isFinishing()) {
+            try { if (activity.isDestroyed()) return; } catch (Throwable ignore) {}
+        }
+        String msg = "当前已是最新版本\n" +
+            "版本号：" + BuildConfig.VERSION_NAME + "（" + BuildConfig.VERSION_CODE + "）\n" +
+            "更新服务器：GitHub Raw + Releases 双通道";
+        new AlertDialog.Builder(activity)
+            .setTitle("没有新的包")
+            .setMessage(msg)
+            .setPositiveButton("知道了", (d, w) -> d.dismiss())
+            .setCancelable(true)
+            .show();
     }
 
     static void showDownloadFailedDialog(Activity activity, String apkUrl, String fallbackUrl,
@@ -126,7 +180,7 @@ public final class UpdateChecker {
         builder.show();
     }
 
-    private static UpdateInfo fetchUpdateInfo() {
+    private static UpdateInfo fetchUpdateInfo(boolean forceBypass) {
         String urlText = BuildConfig.UPDATE_CHECK_URL;
         int attempts = 0;
         while (urlText != null && attempts < MAX_REDIRECTS) {
@@ -140,7 +194,13 @@ public final class UpdateChecker {
                 connection.setReadTimeout(15_000);
                 connection.setRequestProperty("User-Agent", "LibreTV-Android/" + BuildConfig.VERSION_NAME);
                 connection.setRequestProperty("Accept", "application/json,text/plain;q=0.9,*/*;q=0.8");
-                connection.setRequestProperty("Cache-Control", "no-cache");
+                if (forceBypass) {
+                    connection.setRequestProperty("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+                    connection.setRequestProperty("Pragma", "no-cache");
+                    connection.setRequestProperty("Expires", "0");
+                } else {
+                    connection.setRequestProperty("Cache-Control", "no-cache");
+                }
 
                 int code = connection.getResponseCode();
                 if (code == 429) {

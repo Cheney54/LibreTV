@@ -223,7 +223,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void checkForUpdate() {
             runOnUiThread(() -> UpdateChecker.checkManual(MainActivity.this, (ok, message) -> {
-                if (!ok || (message != null && message.contains("已是最新"))) {
+                if (message == null) return;
+                boolean needToast = !ok || message.contains("Activity 已关闭") || message.contains("未配置更新地址");
+                if (needToast) {
                     Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                 }
             }));

@@ -1,11 +1,12 @@
 {
-  "versionCode": 6,
-  "versionName": "1.4.0",
-  "apkUrl": "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.0.apk",
-  "fallbackUrl": "https://github.com/Cheney54/LibreTV/releases/download/v1.4.0/libretv-1.4.0.apk",
-  "apkSize": 8930823,
-  "sha256": "ba9423410a08bf2f53f51a80fc54fa338e414d24668221f50e0af6e8a0db9783",
-  "changelog": "UI 观感全面升级：柔和水蓝主色+毛玻璃体系+卡片微交互；移动端全面兼容：44dp 点击目标、刘海/手势条安全区接管、防双击缩放、去掉 tap 蓝色高亮、横屏适配、低端机毛玻璃降级",
-  "forceUpdate": false,
-  "minVersionCode": 3
+    "versionCode":  7,
+    "versionName":  "1.4.1",
+    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.1.apk",
+    "fallbackUrl":  "https://github.com/Cheney54/LibreTV/releases/download/v1.4.1/libretv-1.4.1.apk",
+    "apkSize":  8931895,
+    "sha256":  "3b943940ae3f000981911b7988a6cb9a3e14045b28f2c6b65479386ee0cc2100",
+    "changelog":  "修复「检查更新不弹窗」问题：手动检查时3种结果（有更新/没更新/失败）都有明确对话框或Toast；启动自动检查失败时轻提示；手动检查不写入暂不更新skipVersion；新增「没有新的包」对话框明确告知用户当前最新版本号",
+    "forceUpdate":  false,
+    "minVersionCode":  3
 }
+
