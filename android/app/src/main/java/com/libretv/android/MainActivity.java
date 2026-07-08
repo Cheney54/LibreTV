@@ -141,6 +141,7 @@ public class MainActivity extends Activity {
         enterImmersiveMode();
         webView.loadUrl(LOCAL_ORIGIN + "/index.html");
         webView.postDelayed(() -> UpdateChecker.checkOnLaunch(this), 2500);
+        ApkUpdateDownloader.resumeIfPending(this);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -407,6 +408,7 @@ public class MainActivity extends Activity {
         if (mediaRouter != null && mediaRouterCallback != null && mediaRouteSelector != null) {
             mediaRouter.addCallback(mediaRouteSelector, mediaRouterCallback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY);
         }
+        ApkUpdateDownloader.resumeIfPending(this);
     }
 
     private class AndroidLivePlayerBridge {

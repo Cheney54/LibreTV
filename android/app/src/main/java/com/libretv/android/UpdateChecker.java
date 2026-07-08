@@ -18,15 +18,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * 从远程 JSON 检查 APK 新版本，支持下载安装与强制更新。
- * 配置见 BuildConfig.UPDATE_CHECK_URL，JSON 格式见 app-update.json.example
- */
 public final class UpdateChecker {
     private static final String PREFS = "libretv_update";
     private static final String KEY_SKIP_CODE = "skip_version_code";
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final int MAX_REDIRECTS = 5;
 
     private UpdateChecker() {
     }
@@ -52,7 +49,6 @@ public final class UpdateChecker {
         });
     }
 
-    /** 设置页手动检查，始终提示结果 */
     public static void checkManual(Activity activity, ManualCheckCallback callback) {
         if (TextUtils.isEmpty(BuildConfig.UPDATE_CHECK_URL)) {
             MAIN.post(() -> callback.onResult(false, "未配置更新地址，请在 app/build.gradle 设置 UPDATE_CHECK_URL"));
@@ -61,7 +57,7 @@ public final class UpdateChecker {
         EXECUTOR.execute(() -> {
             UpdateInfo info = fetchUpdateInfo();
             if (info == null) {
-                MAIN.post(() -> callback.onResult(false, "无法获取更新信息，请检查网络或更新地址"));
+                MAIN.post(() -> callback.onResult(false, "无法获取更新信息：可能网络不可用，或 GitHub 访问限流（429），请稍后再试"));
                 return;
             }
             int current = BuildConfig.VERSION_CODE;
@@ -80,7 +76,12 @@ public final class UpdateChecker {
         if (activity.isFinishing()) {
             return;
         }
-        String message = "新版本：" + info.versionName + "（" + info.versionCode + "）\n"
+        String sizeText = "";
+        if (info.apkSize > 0) {
+            float mb = info.apkSize / 1024.0f / 1024.0f;
+            sizeText = String.format(java.util.Locale.US, "　·　大小：%.2f MB", mb);
+        }
+        String message = "新版本：" + info.versionName + "（" + info.versionCode + "）" + sizeText + "\n"
             + "当前版本：" + BuildConfig.VERSION_NAME + "（" + BuildConfig.VERSION_CODE + "）";
         if (!TextUtils.isEmpty(info.changelog)) {
             message += "\n\n更新说明：\n" + info.changelog;
@@ -91,7 +92,8 @@ public final class UpdateChecker {
             .setMessage(message)
             .setCancelable(!info.forceUpdate)
             .setPositiveButton("立即更新", (d, w) -> ApkUpdateDownloader.start(
-                activity, info.apkUrl, info.versionName, info.versionCode, info.forceUpdate));
+                activity, info.apkUrl, info.fallbackUrl, info.versionName, info.versionCode,
+                info.forceUpdate, info.apkSize, info.sha256));
 
         if (!info.forceUpdate) {
             builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, info.versionCode));
@@ -99,7 +101,6 @@ public final class UpdateChecker {
         builder.show();
     }
 
-    /** 用户选择跳过该版本（网络差或暂不升级） */
     static void skipVersion(Activity activity, int versionCode) {
         activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -107,14 +108,17 @@ public final class UpdateChecker {
             .apply();
     }
 
-    static void showDownloadFailedDialog(Activity activity, String apkUrl, String versionName, int versionCode, boolean forceUpdate) {
+    static void showDownloadFailedDialog(Activity activity, String apkUrl, String fallbackUrl,
+                                         String versionName, int versionCode, boolean forceUpdate,
+                                         long apkSize, String sha256) {
         if (activity.isFinishing()) {
             return;
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
             .setTitle("更新失败")
-            .setMessage("下载未完成，可能是网络不稳定。请换网络后重试，或稍后再更新。")
-            .setPositiveButton("重试", (d, w) -> ApkUpdateDownloader.start(activity, apkUrl, versionName, versionCode, forceUpdate));
+            .setMessage("下载未完成，可能是 GitHub 临时限流或当前网络不稳定。\n可稍后重试，或切换到备用下载地址。")
+            .setPositiveButton("重试", (d, w) -> ApkUpdateDownloader.start(
+                activity, apkUrl, fallbackUrl, versionName, versionCode, forceUpdate, apkSize, sha256));
         if (!forceUpdate) {
             builder.setNegativeButton("暂不更新", (d, w) -> skipVersion(activity, versionCode));
         }
@@ -123,44 +127,75 @@ public final class UpdateChecker {
     }
 
     private static UpdateInfo fetchUpdateInfo() {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(BuildConfig.UPDATE_CHECK_URL).openConnection();
-            connection.setConnectTimeout(12_000);
-            connection.setReadTimeout(12_000);
-            connection.setRequestProperty("User-Agent", "LibreTV-Android/" + BuildConfig.VERSION_NAME);
-            connection.setRequestProperty("Accept", "application/json");
-            int code = connection.getResponseCode();
-            InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            if (stream == null) {
+        String urlText = BuildConfig.UPDATE_CHECK_URL;
+        int attempts = 0;
+        while (urlText != null && attempts < MAX_REDIRECTS) {
+            attempts++;
+            HttpURLConnection connection = null;
+            try {
+                URL u = new URL(urlText);
+                connection = (HttpURLConnection) u.openConnection();
+                connection.setInstanceFollowRedirects(false);
+                connection.setConnectTimeout(15_000);
+                connection.setReadTimeout(15_000);
+                connection.setRequestProperty("User-Agent", "LibreTV-Android/" + BuildConfig.VERSION_NAME);
+                connection.setRequestProperty("Accept", "application/json,text/plain;q=0.9,*/*;q=0.8");
+                connection.setRequestProperty("Cache-Control", "no-cache");
+
+                int code = connection.getResponseCode();
+                if (code == 429) {
+                    return null;
+                }
+                if (code >= 301 && code <= 308) {
+                    String location = connection.getHeaderField("Location");
+                    if (location == null) {
+                        return null;
+                    }
+                    URL base = u;
+                    urlText = new URL(base, location).toString();
+                    connection.disconnect();
+                    continue;
+                }
+                InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                if (stream == null) {
+                    return null;
+                }
+                String body = readUtf8(stream);
+                JSONObject json = new JSONObject(body);
+                UpdateInfo info = new UpdateInfo();
+                info.versionCode = json.optInt("versionCode", 0);
+                info.versionName = json.optString("versionName", "");
+                info.apkUrl = json.optString("apkUrl", "");
+                info.fallbackUrl = json.optString("fallbackUrl", "");
+                info.changelog = json.optString("changelog", "");
+                info.forceUpdate = json.optBoolean("forceUpdate", false);
+                info.apkSize = json.optLong("apkSize", 0L);
+                info.sha256 = json.optString("sha256", "");
+                int minVersionCode = json.optInt("minVersionCode", 0);
+                if (minVersionCode > 0 && BuildConfig.VERSION_CODE < minVersionCode) {
+                    info.forceUpdate = true;
+                }
+                if (info.versionCode <= 0 || TextUtils.isEmpty(info.apkUrl)) {
+                    return null;
+                }
+                if (!info.apkUrl.startsWith("http://") && !info.apkUrl.startsWith("https://")) {
+                    return null;
+                }
+                if (!TextUtils.isEmpty(info.fallbackUrl)
+                    && !info.fallbackUrl.startsWith("http://")
+                    && !info.fallbackUrl.startsWith("https://")) {
+                    info.fallbackUrl = "";
+                }
+                return info;
+            } catch (Exception ignored) {
                 return null;
-            }
-            String body = readUtf8(stream);
-            JSONObject json = new JSONObject(body);
-            UpdateInfo info = new UpdateInfo();
-            info.versionCode = json.optInt("versionCode", 0);
-            info.versionName = json.optString("versionName", "");
-            info.apkUrl = json.optString("apkUrl", "");
-            info.changelog = json.optString("changelog", "");
-            info.forceUpdate = json.optBoolean("forceUpdate", false);
-            int minVersionCode = json.optInt("minVersionCode", 0);
-            if (minVersionCode > 0 && BuildConfig.VERSION_CODE < minVersionCode) {
-                info.forceUpdate = true;
-            }
-            if (info.versionCode <= 0 || TextUtils.isEmpty(info.apkUrl)) {
-                return null;
-            }
-            if (!info.apkUrl.startsWith("http://") && !info.apkUrl.startsWith("https://")) {
-                return null;
-            }
-            return info;
-        } catch (Exception ignored) {
-            return null;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
             }
         }
+        return null;
     }
 
     private static String readUtf8(InputStream input) throws java.io.IOException {
@@ -178,8 +213,11 @@ public final class UpdateChecker {
         int versionCode;
         String versionName;
         String apkUrl;
+        String fallbackUrl;
         String changelog;
         boolean forceUpdate;
+        long apkSize;
+        String sha256;
     }
 
     public interface ManualCheckCallback {
