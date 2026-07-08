@@ -1,11 +1,11 @@
 {
-    "versionCode":  5,
-    "versionName":  "1.3.1",
-    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.3.1.apk",
-    "fallbackUrl":  "https://github.com/Cheney54/LibreTV/releases/download/v1.3.1/libretv-1.3.1.apk",
-    "apkSize":  8960653,
-    "sha256":  "0fd060d243aede9fbbf90a6ce65cda05d61dc3124b8a911a8f2db62776157fa7",
-    "changelog":  "1.3.1: 修复 APK 下载 429 限流（GitHub raw → GitHub Releases 备用地址自动切换）；DownloadManager + HttpURLConnection 双通道重试；SHA256 文件校验；Android 8.0+ 安装未知来源权限引导与自动续装；下载进度用 long 避免溢出，429 返回友好提示",
-    "forceUpdate":  false,
-    "minVersionCode":  3
+  "versionCode": 6,
+  "versionName": "1.4.0",
+  "apkUrl": "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.0.apk",
+  "fallbackUrl": "https://github.com/Cheney54/LibreTV/releases/download/v1.4.0/libretv-1.4.0.apk",
+  "apkSize": 8930823,
+  "sha256": "ba9423410a08bf2f53f51a80fc54fa338e414d24668221f50e0af6e8a0db9783",
+  "changelog": "UI 观感全面升级：柔和水蓝主色+毛玻璃体系+卡片微交互；移动端全面兼容：44dp 点击目标、刘海/手势条安全区接管、防双击缩放、去掉 tap 蓝色高亮、横屏适配、低端机毛玻璃降级",
+  "forceUpdate": false,
+  "minVersionCode": 3
 }

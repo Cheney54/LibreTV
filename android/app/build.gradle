@@ -10,8 +10,8 @@ android {
         applicationId "com.libretv.android"
         minSdk 23
         targetSdk 35
-        versionCode 5
-        versionName "1.3.1"
+        versionCode 6
+        versionName "1.4.0"
         // 由 publish-android-release.ps1 写入 releases/update-check-url.txt 后，重新打包即生效
         def updateCheckUrl = "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/app-update.json"
         def updateUrlFile = file("${rootProject.projectDir}/releases/update-check-url.txt")
@@ -37,6 +37,18 @@ dependencies {
 }
 
 tasks.register("syncLibreTvAssets", Copy) {
+    def siteDir = layout.projectDirectory.dir("src/main/assets/site").asFile
+    doFirst {
+        if (siteDir.exists() && siteDir.isDirectory()) {
+            siteDir.listFiles().each { f ->
+                if (f.isDirectory()) {
+                    f.deleteDir()
+                } else if (!"VERSION.txt".equals(f.name)) {
+                    f.delete()
+                }
+            }
+        }
+    }
     from(rootProject.projectDir.parentFile) {
         include "index.html"
         include "live.html"
@@ -55,6 +67,7 @@ tasks.register("syncLibreTvAssets", Copy) {
         exclude "image/*.psd"
     }
     into layout.projectDirectory.dir("src/main/assets/site")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 preBuild.dependsOn("syncLibreTvAssets")

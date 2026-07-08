@@ -95,6 +95,34 @@ let androidNativeVodActive = false;
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
 
+function showInitialPlayerLoadingOverlay() {
+    try {
+        const overlays = document.querySelectorAll('.player-loading-overlay');
+        overlays.forEach(el => {
+            if (el) el.classList.add('is-visible');
+        });
+        const outer = document.getElementById('player-loading');
+        if (outer) outer.style.display = 'block';
+    } catch (e) {}
+}
+
+function hideAllPlayerLoadingOverlays() {
+    try {
+        const overlays = document.querySelectorAll('#player-loading, .player-loading-container, .player-loading-overlay');
+        overlays.forEach(el => {
+            if (!el) return;
+            el.style.display = 'none';
+            el.classList.remove('is-visible');
+        });
+        const err = document.getElementById('error');
+        if (err) err.style.display = 'none';
+    } catch (e) {}
+}
+
+if (typeof window !== 'undefined') {
+    window.hideAllPlayerLoadingOverlays = hideAllPlayerLoadingOverlays;
+}
+
 function getNativePlaybackUrl(url) {
     if (!url) return url;
     if (url.startsWith('/proxy/')) {
@@ -187,14 +215,7 @@ function tryPlayAndroidNativeVod(videoUrl) {
     teardownWebPlayerForNativeVod();
     androidNativeVodActive = true;
 
-    const loading = document.getElementById('player-loading');
-    if (loading) {
-        loading.style.display = 'none';
-    }
-    const err = document.getElementById('error');
-    if (err) {
-        err.style.display = 'none';
-    }
+    hideAllPlayerLoadingOverlays();
 
     const startSec = getAndroidVodStartPositionSec();
     const title = currentVideoTitle || '点播';
@@ -229,10 +250,11 @@ window.__onNativeVodEnded = function () {
 
 // 页面加载
 document.addEventListener('DOMContentLoaded', function () {
+    showInitialPlayerLoadingOverlay();
+
     // 先检查用户是否已通过密码验证
     if (!isPasswordVerified()) {
-        // 隐藏加载提示
-        document.getElementById('player-loading').style.display = 'none';
+        hideAllPlayerLoadingOverlays();
         return;
     }
 
@@ -1022,7 +1044,7 @@ function initPlayer(videoUrl) {
         autoPlayback: false,
         airplay: true,
         hotkey: false,
-        theme: '#23ade5',
+        theme: '#38bdf8',
         lang: navigator.language.toLowerCase(),
         moreVideoAttr: {
             crossOrigin: 'anonymous',
@@ -1056,8 +1078,7 @@ function initPlayer(videoUrl) {
                 // 监听视频播放事件
                 video.addEventListener('playing', function () {
                     playbackStarted = true;
-                    document.getElementById('player-loading').style.display = 'none';
-                    document.getElementById('error').style.display = 'none';
+                    hideAllPlayerLoadingOverlays();
                     applyQualityEnhancement();
 
                     if (!upgradedToMaxQuality) {
@@ -1177,12 +1198,12 @@ function initPlayer(videoUrl) {
 
                 // 监听分段加载事件
                 hls.on(Hls.Events.FRAG_LOADED, function () {
-                    document.getElementById('player-loading').style.display = 'none';
+                    hideAllPlayerLoadingOverlays();
                 });
 
                 // 监听级别加载事件
                 hls.on(Hls.Events.LEVEL_LOADED, function () {
-                    document.getElementById('player-loading').style.display = 'none';
+                    hideAllPlayerLoadingOverlays();
                 });
 
                 hls.on(Hls.Events.LEVEL_SWITCHED, function () {
@@ -1191,6 +1212,23 @@ function initPlayer(videoUrl) {
             }
         }
     });
+
+    // ArtPlayer 就绪后统一隐藏所有 loading（解决缩小后永久 loading 问题）
+    try {
+        art.on('ready', () => hideAllPlayerLoadingOverlays());
+        art.on('video:canplay', () => hideAllPlayerLoadingOverlays());
+        art.on('playing', () => hideAllPlayerLoadingOverlays());
+        art.on('video:playing', () => hideAllPlayerLoadingOverlays());
+        if (art && art.video) {
+            art.video.addEventListener('canplay', () => hideAllPlayerLoadingOverlays());
+            art.video.addEventListener('timeupdate', function onTimeForHide() {
+                if (art.video && art.video.currentTime > 0.3) {
+                    hideAllPlayerLoadingOverlays();
+                    art.video.removeEventListener('timeupdate', onTimeForHide);
+                }
+            });
+        }
+    } catch (e) {}
 
     // artplayer 没有 'fullscreenWeb:enter', 'fullscreenWeb:exit' 等事件
     // 所以原控制栏隐藏代码并没有起作用
@@ -1259,7 +1297,7 @@ function initPlayer(videoUrl) {
     });
 
     art.on('video:loadedmetadata', function() {
-        document.getElementById('player-loading').style.display = 'none';
+        hideAllPlayerLoadingOverlays();
         videoHasEnded = false; // 视频加载时重置结束标志
         // 优先使用URL传递的position参数
         const urlParams = new URLSearchParams(window.location.search);
@@ -1308,10 +1346,7 @@ function initPlayer(videoUrl) {
         }
 
         // 隐藏所有加载指示器
-        const loadingElements = document.querySelectorAll('#player-loading, .player-loading-container');
-        loadingElements.forEach(el => {
-            if (el) el.style.display = 'none';
-        });
+        hideAllPlayerLoadingOverlays();
 
         showError('视频播放失败: ' + (error.message || '未知错误'));
     });

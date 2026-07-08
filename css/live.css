@@ -1,9 +1,10 @@
 .live-page {
     min-height: 100vh;
     background:
-        linear-gradient(180deg, #0f1622, #192231),
+        linear-gradient(180deg, var(--page-gradient-start, #0f1622), var(--page-gradient-end, #192231)),
         radial-gradient(circle at 24px 24px, rgba(0, 204, 255, 0.04) 2px, transparent 3px);
     background-size: cover, 96px 96px;
+    color: var(--text-color, #e6f2ff);
 }
 
 .live-header {

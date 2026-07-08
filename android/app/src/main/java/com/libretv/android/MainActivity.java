@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -89,7 +90,8 @@ public class MainActivity extends Activity {
     private FrameLayout rootLayout;
     private PlayerView nativePlayerView;
     private ExoPlayer nativePlayer;
-  private String nativeLiveUrl;
+    private androidx.media3.common.Player.Listener nativePlayerListener;
+    private String nativeLiveUrl;
     private int nativeRetryCount;
     private boolean nativeVodMode;
     private long nativeStartPositionMs;
@@ -124,8 +126,35 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        Window win = getWindow();
+        win.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        win.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // WebView 接管沉浸式：透明状态栏/导航栏，内容延伸到刘海/手势条（交给 CSS env(safe-area-inset-*) 控制）
+        win.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        win.setStatusBarColor(0x00000000);    // 状态栏透明（#00000000 → 完全透明）
+        win.setNavigationBarColor(0x00000000); // 导航栏透明
+        if (Build.VERSION.SDK_INT >= 29) {
+            // Android 10+：不强制导航栏/状态栏对比色（配合透明导航条更沉浸）
+            try {
+                win.setStatusBarContrastEnforced(false);
+                win.setNavigationBarContrastEnforced(false);
+                win.setNavigationBarDividerColor(0x00000000);
+            } catch (Throwable ignore) {}
+            // Android 9+：允许内容绘制到刘海/挖孔区（SHORT_EDGES：横屏两侧短边也允许）
+            try {
+                android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                lp.layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                win.setAttributes(lp);
+            } catch (Throwable ignore) {}
+        } else if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                lp.layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                win.setAttributes(lp);
+            } catch (Throwable ignore) {}
+        }
 
         rootLayout = new FrameLayout(this);
         webView = new WebView(this);
@@ -157,6 +186,16 @@ public class MainActivity extends Activity {
         settings.setUserAgentString(USER_AGENT);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        // === 移动端适配：防止字号错乱 + 禁止误缩放（配合 CSS touch-action: manipulation） ===
+        // 1) 固定 WebView 渲染字号缩放为 100%（避免 Android 设置里「大字体/超大字体」把页面搞乱）
+        settings.setTextZoom(100);
+        // 2) 禁止手势缩放（pinch-zoom）和双击缩放，避免页面 200% 放大
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+        // 3) 让 HTML viewport meta 生效（content="width=device-width, initial-scale=1, user-scalable=no, maximum-scale=1"）
+        try { settings.setNeedInitialFocus(true); } catch (Throwable ignore) {}
+        try { settings.setOffscreenPreRaster(true); } catch (Throwable ignore) {}
 
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
@@ -300,7 +339,7 @@ public class MainActivity extends Activity {
         try { nativePlayer.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT); } catch (Throwable ignore) {}
         nativePlayer.setVolume(1.0f);
 
-        nativePlayer.addListener(new Player.Listener() {
+        nativePlayerListener = new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException error) {
                 retryNativePlayback();
@@ -320,7 +359,8 @@ public class MainActivity extends Activity {
                     notifyNativeVodEnded();
                 }
             }
-        });
+        };
+        nativePlayer.addListener(nativePlayerListener);
 
         nativePlayerView = new PlayerView(this);
         nativePlayerView.setBackgroundColor(Color.BLACK);
@@ -386,17 +426,45 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        ApkUpdateDownloader.onActivityDestroyed(this);
+        if (nativePlayerView != null) {
+            try { nativePlayerView.setControllerOnFullScreenModeChangedListener(null); } catch (Throwable ignore) {}
+            try { nativePlayerView.setPlayer(null); } catch (Throwable ignore) {}
+        }
         if (nativePlayer != null) {
+            try { nativePlayer.removeListener(nativePlayerListener); } catch (Throwable ignore) {}
             nativePlayer.release();
             nativePlayer = null;
         }
         releaseCast();
+        try {
+            if (webView != null) {
+                webView.stopLoading();
+                webView.removeAllViews();
+                webView.setWebChromeClient(null);
+                webView.setWebViewClient(null);
+                ViewParent p = webView.getParent();
+                if (p instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) p).removeView(webView);
+                }
+                webView.destroy();
+                webView = null;
+            }
+        } catch (Throwable ignore) {
+            webView = null;
+        }
         super.onDestroy();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        try {
+            if (webView != null) {
+                webView.onPause();
+                webView.pauseTimers();
+            }
+        } catch (Throwable ignore) {}
         if (mediaRouter != null && mediaRouterCallback != null) {
             mediaRouter.removeCallback(mediaRouterCallback);
         }
@@ -405,6 +473,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        try {
+            if (webView != null) {
+                webView.onResume();
+                webView.resumeTimers();
+            }
+        } catch (Throwable ignore) {}
         if (mediaRouter != null && mediaRouterCallback != null && mediaRouteSelector != null) {
             mediaRouter.addCallback(mediaRouteSelector, mediaRouterCallback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY);
         }
@@ -617,8 +691,8 @@ public class MainActivity extends Activity {
 
     private void hideNativePlayer(boolean returnToWeb) {
         if (nativePlayer != null) {
-            nativePlayer.stop();
-            nativePlayer.clearMediaItems();
+            try { nativePlayer.stop(); } catch (Throwable ignore) {}
+            try { nativePlayer.clearMediaItems(); } catch (Throwable ignore) {}
         }
         nativeLiveUrl = null;
         nativeRetryCount = 0;
@@ -630,6 +704,7 @@ public class MainActivity extends Activity {
         if (returnToWeb) {
             webView.setVisibility(View.VISIBLE);
             enterImmersiveMode();
+            forceResumeWebPlayerState();
         }
     }
 
@@ -639,7 +714,31 @@ public class MainActivity extends Activity {
             webView.setVisibility(View.VISIBLE);
             webView.evaluateJavascript("window.__onNativeVodEnded && window.__onNativeVodEnded();", null);
             enterImmersiveMode();
+            forceResumeWebPlayerState();
         });
+    }
+
+    private void forceResumeWebPlayerState() {
+        if (webView == null) return;
+        final String js =
+            "(function(){" +
+            "  try{" +
+            "    var all = document.querySelectorAll('#player-loading, .player-loading-container, .player-loading-overlay');" +
+            "    all.forEach(function(el){ el.style.display='none'; });" +
+            "    var err = document.getElementById('error');" +
+            "    if(err){ err.style.display='none'; }" +
+            "    if(window.art){" +
+            "      try{ window.art.play && window.art.play(); }catch(e){}" +
+            "      try{ if(window.art.video && typeof window.art.video.play==='function'){ window.art.video.play().catch(function(){});} }catch(e){}" +
+            "    }else{" +
+            "      var vs = document.querySelectorAll('video');" +
+            "      vs.forEach(function(v){ try{ v.play().catch(function(){}); }catch(e){} });" +
+            "    }" +
+            "  }catch(e){}" +
+            "})();";
+        try {
+            webView.evaluateJavascript(js, null);
+        } catch (Throwable ignore) {}
     }
 
     private static String escapeJsString(String value) {
@@ -876,7 +975,7 @@ public class MainActivity extends Activity {
             }
             customView = view;
             customViewCallback = callback;
-            webView.setVisibility(View.GONE);
+            webView.setVisibility(View.INVISIBLE);
             if (nativePlayerView != null) {
                 nativePlayerView.setVisibility(View.GONE);
             }
@@ -899,6 +998,7 @@ public class MainActivity extends Activity {
                 customViewCallback = null;
             }
             enterImmersiveMode();
+            forceResumeWebPlayerState();
         }
     }
 

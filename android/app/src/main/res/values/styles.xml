@@ -5,6 +5,13 @@
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#23ade5</item>
+
+        <!-- 与 Web 层现代影视主题色对齐（柔和水蓝 #38bdf8 主色 + 暖深蓝黑背景） -->
+        <item name="android:colorPrimary">#38bdf8</item>
+        <item name="android:colorPrimaryDark">#0b1017</item>
+        <item name="android:colorAccent">#38bdf8</item>
+        <item name="android:statusBarColor">#0b1017</item>
+        <item name="android:navigationBarColor">#05070a</item>
+        <item name="android:windowBackground">#05070a</item>
     </style>
 </resources>

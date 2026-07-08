@@ -23,6 +23,7 @@ coverage
 *.sln
 *.sw?
 .env
+*.psd
 
 # Android build outputs
 .android-tools/

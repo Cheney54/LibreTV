@@ -91,6 +91,18 @@ public final class ApkUpdateDownloader {
         }
     }
 
+    public static void onActivityDestroyed(Activity activity) {
+        cancelled.set(true);
+        try { unregisterReceiver(activity); } catch (Throwable ignore) {}
+        dismissProgress();
+        pendingApkUrl = null;
+        pendingFallbackUrl = null;
+        pendingVersionName = null;
+        pendingSha256 = null;
+        downloadedFile = null;
+        directProgressTick = null;
+    }
+
     private static void startDownload(Activity activity, String apkUrl, String versionName, boolean allowDirectFallback) {
         if (apkUrl == null || (!apkUrl.startsWith("http://") && !apkUrl.startsWith("https://"))) {
             Toast.makeText(activity, "无效的 APK 地址", Toast.LENGTH_SHORT).show();
@@ -103,7 +115,12 @@ public final class ApkUpdateDownloader {
             String safeVersion = versionName != null ? versionName.replaceAll("[^a-zA-Z0-9._-]", "_") : "latest";
             String fileName = "libretv-update-" + safeVersion + ".apk";
             File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-            if (dir == null) dir = activity.getFilesDir();
+            if (dir != null) {
+                dir = new File(dir, "apks");
+            } else {
+                dir = new File(activity.getFilesDir(), "apks");
+            }
+            if (!dir.exists()) dir.mkdirs();
             File target = new File(dir, fileName);
             if (target.exists()) target.delete();
             downloadedFile = target;
@@ -120,7 +137,12 @@ public final class ApkUpdateDownloader {
             if (allowDirectFallback) {
                 String safeVersion = versionName != null ? versionName.replaceAll("[^a-zA-Z0-9._-]", "_") : "latest";
                 File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-                if (dir == null) dir = activity.getFilesDir();
+                if (dir != null) {
+                    dir = new File(dir, "apks");
+                } else {
+                    dir = new File(activity.getFilesDir(), "apks");
+                }
+                if (!dir.exists()) dir.mkdirs();
                 File target = new File(dir, "libretv-update-" + safeVersion + ".apk");
                 if (target.exists()) target.delete();
                 downloadedFile = target;
@@ -142,7 +164,7 @@ public final class ApkUpdateDownloader {
                 try { request.addRequestHeader("Accept-Encoding", "identity"); } catch (Throwable ignore) {}
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                request.setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS, fileName);
+                request.setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS, "apks/" + fileName);
             } else {
                 request.setDestinationUri(Uri.fromFile(target));
             }
@@ -255,7 +277,12 @@ public final class ApkUpdateDownloader {
                     if (!TextUtils.isEmpty(fallback)) {
                         pendingFallbackUrl = "";
                         File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-                        if (dir == null) dir = activity.getFilesDir();
+                        if (dir != null) {
+                            dir = new File(dir, "apks");
+                        } else {
+                            dir = new File(activity.getFilesDir(), "apks");
+                        }
+                        if (!dir.exists()) dir.mkdirs();
                         String safeVersion = pendingVersionName != null ? pendingVersionName.replaceAll("[^a-zA-Z0-9._-]", "_") : "latest";
                         File t2 = new File(dir, "libretv-update-" + safeVersion + ".apk");
                         if (t2.exists()) t2.delete();
