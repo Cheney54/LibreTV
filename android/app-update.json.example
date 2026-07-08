@@ -1,10 +1,11 @@
 {
-  "versionCode": 4,
-  "versionName": "1.3.0",
-  "apkUrl": "https://your-server.com/releases/libretv-1.3.0.apk",
-  "apkSize": 8953741,
-  "sha256": "548e71757ed49126d1dfaed41dcc35a3af786cb2c2957c5b902ba94a19ae2796",
-  "changelog": "1.3.0: 投屏到电视（系统级 MediaRouter/DLNA）；点播 ExoPlayer+HLS 缓冲抗卡顿优化；播放最小化/全屏切换修复；播放器按钮与状态样式优化",
+  "versionCode": 5,
+  "versionName": "1.3.1",
+  "apkUrl": "https://your-server.com/releases/libretv-1.3.1.apk",
+  "fallbackUrl": "https://your-server.com/releases/libretv-1.3.1-mirror.apk",
+  "apkSize": 8960653,
+  "sha256": "0fd060d243aede9fbbf90a6ce65cda05d61dc3124b8a911a8f2db62776157fa7",
+  "changelog": "1.3.1: 修复 APK 下载 429 限流（主/备用地址自动切换）；DownloadManager + HttpURLConnection 双通道重试；SHA256 文件校验；Android 8.0+ 安装未知来源权限引导与自动续装",
   "forceUpdate": false,
   "minVersionCode": 3
 }
