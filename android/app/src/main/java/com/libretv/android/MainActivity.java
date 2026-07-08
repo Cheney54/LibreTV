@@ -2,8 +2,13 @@ package com.libretv.android;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
+import android.media.AudioManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
@@ -20,17 +25,44 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import androidx.annotation.OptIn;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.cache.Cache;
+import androidx.media3.datasource.cache.CacheDataSource;
+import androidx.media3.datasource.cache.CacheEvictor;
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
+import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.RenderersFactory;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.exoplayer.upstream.BandwidthMeter;
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy;
+import androidx.media3.session.MediaSession;
+import androidx.media3.session.SessionToken;
 import androidx.media3.ui.PlayerView;
+import androidx.mediarouter.app.MediaRouteButton;
+import androidx.mediarouter.media.MediaControlIntent;
+import androidx.mediarouter.media.MediaRouteSelector;
+import androidx.mediarouter.media.MediaRouter;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -38,8 +70,11 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
     private static final String LOCAL_HOST = "libretv.local";
@@ -61,6 +96,30 @@ public class MainActivity extends Activity {
     private boolean nativeEndHandled;
     private boolean nativeSeekApplied;
 
+    private MediaSession mediaSession;
+    private MediaRouter mediaRouter;
+    private MediaRouteSelector mediaRouteSelector;
+    private MediaRouter.Callback mediaRouterCallback;
+    private String castDeviceName;
+    private boolean isCastingActive;
+    private final Object castMediaLock = new Object();
+    private String castMediaTitle;
+    private String castMediaUrl;
+    private String castMediaPoster;
+    private long castMediaDurationMs;
+    private long castMediaPositionMs;
+    private boolean castMediaIsPlaying;
+    private androidx.mediarouter.media.MediaRouter.RouteInfo selectedCastRoute;
+
+    private static final long VIDEO_CACHE_MAX_BYTES = 512L * 1024 * 1024;
+    private static Cache sVideoDiskCache;
+    private DefaultTrackSelector trackSelector;
+    private DefaultTrackSelector.Parameters trackSelectorParams;
+    private BandwidthMeter bandwidthMeter;
+    private DataSource.Factory upstreamDataSourceFactory;
+    private DataSource.Factory cachedDataSourceFactory;
+    private LoadErrorHandlingPolicy loadErrorPolicy;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -78,6 +137,7 @@ public class MainActivity extends Activity {
         setContentView(rootLayout);
         configureWebView();
         configureNativePlayer();
+        initCast();
         enterImmersiveMode();
         webView.loadUrl(LOCAL_ORIGIN + "/index.html");
         webView.postDelayed(() -> UpdateChecker.checkOnLaunch(this), 2500);
@@ -106,6 +166,7 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new AndroidLivePlayerBridge(), "AndroidLivePlayer");
         webView.addJavascriptInterface(new AndroidVodPlayerBridge(), "AndroidVodPlayer");
         webView.addJavascriptInterface(new AndroidAppUpdateBridge(), "AndroidAppUpdate");
+        webView.addJavascriptInterface(new AndroidCastBridge(), "AndroidCast");
     }
 
     private class AndroidAppUpdateBridge {
@@ -129,22 +190,115 @@ public class MainActivity extends Activity {
         }
     }
 
+    @OptIn(markerClass = UnstableApi.class)
+    private synchronized Cache getVideoDiskCache() {
+        if (sVideoDiskCache == null) {
+            try {
+                File cacheDir = new File(getCacheDir(), "exoplayer_vod");
+                if (!cacheDir.exists()) cacheDir.mkdirs();
+                CacheEvictor evictor = new LeastRecentlyUsedCacheEvictor(VIDEO_CACHE_MAX_BYTES);
+                sVideoDiskCache = new SimpleCache(cacheDir, evictor);
+            } catch (Throwable t) {
+                sVideoDiskCache = null;
+            }
+        }
+        return sVideoDiskCache;
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
     private void configureNativePlayer() {
-        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                120_000,
-                3_600_000,
-                5_000,
-                15_000
-            )
-            .setBackBuffer(300_000, true)
-            .setPrioritizeTimeOverSizeThresholds(true)
+        bandwidthMeter = new DefaultBandwidthMeter.Builder(this)
+            .setInitialBitrateEstimate(6_000_000L)
+            .setResetOnNetworkTypeChange(true)
             .build();
 
-        nativePlayer = new ExoPlayer.Builder(this)
+        AdaptiveTrackSelection.Factory trackSelectionFactory = new AdaptiveTrackSelection.Factory();
+        trackSelector = new DefaultTrackSelector(this, trackSelectionFactory);
+        DefaultTrackSelector.Parameters.Builder paramsBuilder = trackSelector.getParameters().buildUpon()
+            .setMaxVideoSize(1920, 1080)
+            .setMaxVideoFrameRate(60)
+            .setForceLowestBitrate(false)
+            .setForceHighestSupportedBitrate(false);
+        if (Build.VERSION.SDK_INT < 24) {
+            paramsBuilder.setMaxVideoSize(1280, 720);
+        }
+        trackSelector.setParameters(paramsBuilder.build());
+        trackSelectorParams = trackSelector.getParameters();
+
+        RenderersFactory renderersFactory = new DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            .forceEnableMediaCodecAsynchronousQueueing();
+
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000,
+                60_000,
+                1_500,
+                3_000
+            )
+            .setBackBuffer(60_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(C.LENGTH_UNSET)
+            .build();
+
+        Map<String, String> baseHeaders = new HashMap<>();
+        baseHeaders.put("User-Agent", USER_AGENT);
+        baseHeaders.put("Accept", "*/*");
+        baseHeaders.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        baseHeaders.put("Connection", "keep-alive");
+
+        DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+            .setUserAgent(USER_AGENT)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(30_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
+            .setDefaultRequestProperties(baseHeaders);
+        upstreamDataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
+
+        Cache diskCache = getVideoDiskCache();
+        if (diskCache != null) {
+            cachedDataSourceFactory = new CacheDataSource.Factory()
+                .setCache(diskCache)
+                .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
+                .setCacheReadDataSourceFactory(new DefaultDataSource.Factory(this))
+                .setCacheWriteDataSinkFactory(null)
+                .setUpstreamPriority(C.PRIORITY_PLAYBACK);
+        } else {
+            cachedDataSourceFactory = upstreamDataSourceFactory;
+        }
+
+        loadErrorPolicy = new DefaultLoadErrorHandlingPolicy(6);
+
+        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
+            .setDataSourceFactory(cachedDataSourceFactory);
+
+        nativePlayer = new ExoPlayer.Builder(this, renderersFactory)
             .setLoadControl(loadControl)
+            .setTrackSelector(trackSelector)
+            .setBandwidthMeter(bandwidthMeter)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
+            .setSeekBackIncrementMs(10_000L)
+            .setSeekForwardIncrementMs(10_000L)
+            .setUseLazyPreparation(true)
+            .setReleaseTimeoutMs(10_000L)
             .build();
         nativePlayer.setPlayWhenReady(true);
+        nativePlayer.setAudioAttributes(
+            new androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
+                .build(),
+            true
+        );
+        try { nativePlayer.setVideoScalingMode(C.VIDEO_SCALING_MODE_SCALE_TO_FIT); } catch (Throwable ignore) {}
+        nativePlayer.setVolume(1.0f);
+
         nativePlayer.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException error) {
@@ -171,7 +325,20 @@ public class MainActivity extends Activity {
         nativePlayerView.setBackgroundColor(Color.BLACK);
         nativePlayerView.setPlayer(nativePlayer);
         nativePlayerView.setUseController(true);
+        nativePlayerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
         nativePlayerView.setVisibility(View.GONE);
+        nativePlayerView.setFullscreenButtonClickListener(new androidx.media3.ui.PlayerView.FullscreenButtonClickListener() {
+            @Override
+            public void onFullscreenButtonClick(boolean fullscreen) {
+                if (!fullscreen) {
+                    hideNativePlayer(true);
+                } else {
+                    enterImmersiveMode();
+                }
+            }
+        });
+        try { nativePlayerView.setKeepContentOnPlayerReset(true); } catch (Throwable ignore) {}
+        try { nativePlayerView.setUseArtwork(true); } catch (Throwable ignore) {}
         rootLayout.addView(nativePlayerView, new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
@@ -222,7 +389,24 @@ public class MainActivity extends Activity {
             nativePlayer.release();
             nativePlayer = null;
         }
+        releaseCast();
         super.onDestroy();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (mediaRouter != null && mediaRouterCallback != null) {
+            mediaRouter.removeCallback(mediaRouterCallback);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mediaRouter != null && mediaRouterCallback != null && mediaRouteSelector != null) {
+            mediaRouter.addCallback(mediaRouteSelector, mediaRouterCallback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY);
+        }
     }
 
     private class AndroidLivePlayerBridge {
@@ -253,9 +437,77 @@ public class MainActivity extends Activity {
         }
     }
 
+    private class AndroidCastBridge {
+        @JavascriptInterface
+        public boolean isSupported() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public String getStatus() {
+            synchronized (castMediaLock) {
+                boolean connected = isCastingActive && selectedCastRoute != null;
+                String device = connected && castDeviceName != null ? castDeviceName : "";
+                String title = castMediaTitle != null ? castMediaTitle : "";
+                return "{\"supported\":true,\"active\":" + connected + ",\"deviceName\":\"" + escapeJsString(device) + "\",\"mediaTitle\":\"" + escapeJsString(title) + "\"}";
+            }
+        }
+
+        @JavascriptInterface
+        public void openCastDialog() {
+            runOnUiThread(() -> showCastRouteChooser());
+        }
+
+        @JavascriptInterface
+        public void stopCasting() {
+            runOnUiThread(() -> disconnectCastRoute());
+        }
+
+        @JavascriptInterface
+        public void setMediaInfo(String title, String url, String poster, double durationSec, double positionSec, boolean isPlaying) {
+            synchronized (castMediaLock) {
+                castMediaTitle = title;
+                castMediaUrl = url;
+                castMediaPoster = poster;
+                castMediaDurationMs = (long) (Math.max(0, durationSec) * 1000);
+                castMediaPositionMs = (long) (Math.max(0, positionSec) * 1000);
+                castMediaIsPlaying = isPlaying;
+            }
+            runOnUiThread(() -> {
+                updateMediaSessionMetadataAndState();
+                if (isCastingActive && selectedCastRoute != null) {
+                    sendMediaToCastRoute();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void setPlaybackState(double positionSec, boolean isPlaying) {
+            synchronized (castMediaLock) {
+                castMediaPositionMs = (long) (Math.max(0, positionSec) * 1000);
+                castMediaIsPlaying = isPlaying;
+            }
+            runOnUiThread(() -> {
+                updateMediaSessionPlaybackState();
+                if (isCastingActive && selectedCastRoute != null) {
+                    sendPlaybackStateToCastRoute();
+                }
+            });
+        }
+    }
+
     private void showNativePlayer(String url, boolean vod, long startPositionMs) {
         if (url == null || (!url.startsWith("http://") && !url.startsWith("https://"))) {
             return;
+        }
+
+        if (customView != null) {
+            rootLayout.removeView(customView);
+            customView = null;
+            if (customViewCallback != null) {
+                customViewCallback.onCustomViewHidden();
+                customViewCallback = null;
+            }
         }
 
         nativeVodMode = vod;
@@ -270,26 +522,67 @@ public class MainActivity extends Activity {
         enterImmersiveMode();
     }
 
+    @OptIn(markerClass = UnstableApi.class)
     private void playNativeUrl(String url) {
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", USER_AGENT);
         headers.put("Accept", "*/*");
+        headers.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
         headers.put("Connection", "keep-alive");
-        headers.put("Referer", originFor(url));
+        String referer = originFor(url);
+        if (referer != null && !referer.isEmpty()) {
+            headers.put("Referer", referer);
+        }
+        String origin = originFor(url);
+        if (origin != null && !origin.isEmpty()) {
+            headers.put("Origin", origin);
+        }
 
-        DefaultHttpDataSource.Factory dataSourceFactory = new DefaultHttpDataSource.Factory()
-            .setUserAgent(USER_AGENT)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(60_000)
-            .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(headers);
+        MediaItem.Builder itemBuilder = new MediaItem.Builder()
+            .setUri(Uri.parse(url));
+        if (nativeStartPositionMs > 0) {
+            itemBuilder.setClipStartPositionMs(nativeStartPositionMs);
+        }
+        MediaItem mediaItem = itemBuilder.build();
 
-        MediaItem mediaItem = MediaItem.fromUri(Uri.parse(url));
-        HlsMediaSource mediaSource = new HlsMediaSource.Factory(dataSourceFactory)
-            .setAllowChunklessPreparation(true)
-            .createMediaSource(mediaItem);
+        DataSource.Factory playDsf;
+        Cache diskCache = getVideoDiskCache();
+        if (diskCache != null) {
+            final Map<String, String> finalHeaders = headers;
+            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+                .setUserAgent(USER_AGENT)
+                .setConnectTimeoutMs(20_000)
+                .setReadTimeoutMs(30_000)
+                .setAllowCrossProtocolRedirects(true)
+                .setKeepPostFor302Redirects(true)
+                .setDefaultRequestProperties(finalHeaders);
+            DataSource.Factory upstream = new DefaultDataSource.Factory(this, httpFactory);
+            playDsf = new CacheDataSource.Factory()
+                .setCache(diskCache)
+                .setUpstreamDataSourceFactory(upstream)
+                .setCacheReadDataSourceFactory(new DefaultDataSource.Factory(this))
+                .setCacheWriteDataSinkFactory(null)
+                .setUpstreamPriority(C.PRIORITY_PLAYBACK);
+        } else {
+            final Map<String, String> finalHeaders2 = headers;
+            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+                .setUserAgent(USER_AGENT)
+                .setConnectTimeoutMs(20_000)
+                .setReadTimeoutMs(30_000)
+                .setAllowCrossProtocolRedirects(true)
+                .setKeepPostFor302Redirects(true)
+                .setDefaultRequestProperties(finalHeaders2);
+            playDsf = new DefaultDataSource.Factory(this, httpFactory);
+        }
 
-        nativePlayer.setMediaSource(mediaSource);
+        DefaultMediaSourceFactory playMsf = new DefaultMediaSourceFactory(this)
+            .setDataSourceFactory(playDsf);
+
+        try {
+            nativePlayer.setMediaSource(playMsf.createMediaSource(mediaItem), nativeStartPositionMs > 0 ? nativeStartPositionMs : C.TIME_UNSET);
+        } catch (Throwable t) {
+            nativePlayer.setMediaItem(mediaItem, nativeStartPositionMs > 0 ? nativeStartPositionMs : C.TIME_UNSET);
+        }
         nativePlayer.prepare();
         nativePlayer.play();
     }
@@ -300,11 +593,24 @@ public class MainActivity extends Activity {
         }
 
         nativeRetryCount++;
+        final int rc = nativeRetryCount;
+        long delayMs = rc <= 1 ? 300L
+                    : rc <= 2 ? 800L
+                    : rc <= 3 ? 2_000L
+                    : rc <= 4 ? 5_000L
+                    : Math.min(30_000L, 1_000L * (1L << Math.min(rc - 4, 5)));
+
         nativePlayerView.postDelayed(() -> {
-            if (nativePlayerView.getVisibility() == View.VISIBLE && nativeLiveUrl != null) {
+            if (nativePlayerView.getVisibility() != View.VISIBLE || nativeLiveUrl == null || nativePlayer == null) {
+                return;
+            }
+            try {
+                nativePlayer.prepare();
+                nativePlayer.play();
+            } catch (Throwable t) {
                 playNativeUrl(nativeLiveUrl);
             }
-        }, Math.min(15_000, 2_000L * nativeRetryCount));
+        }, delayMs);
     }
 
     private void hideNativePlayer(boolean returnToWeb) {
@@ -345,6 +651,220 @@ public class MainActivity extends Activity {
             .replace("\r", "\\r");
     }
 
+    private void initCast() {
+        try {
+            mediaRouter = MediaRouter.getInstance(getApplicationContext());
+            mediaRouteSelector = new MediaRouteSelector.Builder()
+                .addControlCategory(MediaControlIntent.CATEGORY_LIVE_AUDIO)
+                .addControlCategory(MediaControlIntent.CATEGORY_LIVE_VIDEO)
+                .addControlCategory(MediaControlIntent.CATEGORY_REMOTE_PLAYBACK)
+                .build();
+
+            mediaRouterCallback = new MediaRouter.Callback() {
+                @Override
+                public void onRouteSelected(MediaRouter router, MediaRouter.RouteInfo route) {
+                    selectedCastRoute = route;
+                    castDeviceName = route.getName();
+                    isCastingActive = true;
+                    runOnUiThread(() -> {
+                        updateMediaSessionMetadataAndState();
+                        sendMediaToCastRoute();
+                        notifyCastStatusToWeb();
+                        Toast.makeText(MainActivity.this, "已连接投屏设备: " + castDeviceName, Toast.LENGTH_SHORT).show();
+                    });
+                }
+
+                @Override
+                public void onRouteUnselected(MediaRouter router, MediaRouter.RouteInfo route) {
+                    if (route == selectedCastRoute) {
+                        selectedCastRoute = null;
+                        isCastingActive = false;
+                        castDeviceName = null;
+                        runOnUiThread(() -> {
+                            notifyCastStatusToWeb();
+                            Toast.makeText(MainActivity.this, "已断开投屏", Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                }
+
+                @Override
+                public void onRouteAdded(MediaRouter router, MediaRouter.RouteInfo route) {}
+
+                @Override
+                public void onRouteRemoved(MediaRouter router, MediaRouter.RouteInfo route) {}
+            };
+
+            mediaRouter.addCallback(mediaRouteSelector, mediaRouterCallback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY);
+            initMediaSession();
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void releaseCast() {
+        try {
+            if (mediaRouter != null && mediaRouterCallback != null) {
+                mediaRouter.removeCallback(mediaRouterCallback);
+            }
+            if (mediaSession != null) {
+                mediaSession.release();
+                mediaSession = null;
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void initMediaSession() {
+        try {
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pi = PendingIntent.getActivity(this, 0, intent, flags);
+
+            try {
+                Class<?> builderClz = Class.forName("androidx.media3.session.MediaSession$Builder");
+                Object builder = builderClz
+                    .getMethod("Builder", Context.class)
+                    .invoke(null, this);
+                try { builderClz.getMethod("setSessionActivity", PendingIntent.class).invoke(builder, pi); } catch (Throwable ignore) {}
+                try { builderClz.getMethod("setId", String.class).invoke(builder, "LibreTVCastSession"); } catch (Throwable ignore) {}
+                try { builderClz.getMethod("setCallback", Class.forName("androidx.media3.session.MediaSession$Callback"))
+                        .invoke(builder, null); } catch (Throwable ignore) {}
+                mediaSession = (MediaSession) builderClz.getMethod("build").invoke(builder);
+            } catch (Throwable t1) {
+                try {
+                    mediaSession = (MediaSession) MediaSession.class
+                        .getConstructor(Context.class, String.class, Player.class, PendingIntent.class)
+                        .newInstance(this, "LibreTVCastSession", null, pi);
+                } catch (Throwable t2) {
+                    mediaSession = null;
+                }
+            }
+            if (mediaSession != null) {
+                try {
+                    java.lang.reflect.Method m = mediaSession.getClass().getMethod("setActive", boolean.class);
+                    m.invoke(mediaSession, true);
+                } catch (Throwable ignore) {}
+                if (nativePlayer != null) {
+                    try {
+                        mediaSession.getClass().getMethod("setPlayer", Player.class).invoke(mediaSession, nativePlayer);
+                    } catch (Throwable ignore) {}
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+            mediaSession = null;
+        }
+    }
+
+    private void updateMediaSessionMetadataAndState() {
+        try { updateMediaSessionMetadata(); } catch (Throwable ignore) {}
+        try { updateMediaSessionPlaybackState(); } catch (Throwable ignore) {}
+    }
+
+    private void updateMediaSessionMetadata() {
+        if (mediaSession == null) return;
+        try {
+            synchronized (castMediaLock) {
+                if (nativePlayer != null) {
+                    try { mediaSession.setPlayer(nativePlayer); } catch (Throwable ignore) {}
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void updateMediaSessionPlaybackState() {
+        if (mediaSession == null) return;
+        try {
+            synchronized (castMediaLock) {
+                if (nativePlayer != null) {
+                    try { mediaSession.setPlayer(nativePlayer); } catch (Throwable ignore) {}
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void showCastRouteChooser() {
+        try {
+            if (mediaRouter == null || mediaRouteSelector == null) {
+                Toast.makeText(this, "投屏功能未初始化", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            try {
+                Class<?> clz = mediaRouter.getClass();
+                java.lang.reflect.Method m = clz.getMethod("showRouteChooserDialog",
+                    Class.forName("androidx.mediarouter.media.MediaRouteSelector"), int.class);
+                m.invoke(mediaRouter, mediaRouteSelector, 0);
+                return;
+            } catch (Throwable ignore) {}
+            Toast.makeText(this, "请在系统设置中选择投屏设备（DLNA/Chromecast）", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            t.printStackTrace();
+            Toast.makeText(this, "打开投屏设备选择器失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void disconnectCastRoute() {
+        try {
+            if (mediaRouter != null) {
+                mediaRouter.selectRoute(mediaRouter.getDefaultRoute());
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void sendMediaToCastRoute() {
+        if (mediaSession == null || selectedCastRoute == null) return;
+        try {
+            updateMediaSessionMetadata();
+            updateMediaSessionPlaybackState();
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void sendPlaybackStateToCastRoute() {
+        if (mediaSession == null) return;
+        try {
+            updateMediaSessionPlaybackState();
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private void notifyCastStatusToWeb() {
+        if (webView == null) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("(function(){var e=new CustomEvent('caststatuschange',{detail:");
+            sb.append(getStatusJson());
+            sb.append("});window.dispatchEvent(e);if(window.__onCastStatusChange){try{window.__onCastStatusChange(");
+            sb.append(getStatusJson());
+            sb.append(");}catch(_){}}})();");
+            webView.evaluateJavascript(sb.toString(), null);
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+    }
+
+    private String getStatusJson() {
+        synchronized (castMediaLock) {
+            boolean connected = isCastingActive && selectedCastRoute != null;
+            String device = connected && castDeviceName != null ? castDeviceName : "";
+            String title = castMediaTitle != null ? castMediaTitle : "";
+            return "{\"supported\":true,\"active\":" + connected + ",\"deviceName\":\"" + escapeJsString(device) + "\",\"mediaTitle\":\"" + escapeJsString(title) + "\"}";
+        }
+    }
+
     private class LibreTvChromeClient extends WebChromeClient {
         @Override
         public void onShowCustomView(View view, CustomViewCallback callback) {
@@ -354,17 +874,24 @@ public class MainActivity extends Activity {
             }
             customView = view;
             customViewCallback = callback;
-            rootLayout.setVisibility(View.GONE);
-            setContentView(customView);
+            webView.setVisibility(View.GONE);
+            if (nativePlayerView != null) {
+                nativePlayerView.setVisibility(View.GONE);
+            }
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            );
+            rootLayout.addView(customView, params);
             enterImmersiveMode();
         }
 
         @Override
         public void onHideCustomView() {
             if (customView == null) return;
+            rootLayout.removeView(customView);
             customView = null;
-            rootLayout.setVisibility(View.VISIBLE);
-            setContentView(rootLayout);
+            webView.setVisibility(View.VISIBLE);
             if (customViewCallback != null) {
                 customViewCallback.onCustomViewHidden();
                 customViewCallback = null;

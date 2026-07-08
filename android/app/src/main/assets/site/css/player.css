@@ -476,3 +476,70 @@ input:checked + .slider:before {
 #username {
     display: none !important;
 }
+
+/* ==================== 投屏按钮样式 ==================== */
+.cast-button {
+    pointer-events: auto !important;
+    color: #cbd5e1;
+    min-width: 42px;
+    transition: all 0.2s ease;
+}
+
+.cast-button:hover {
+    color: #ffffff;
+    background-color: #2a2a2a !important;
+    border-color: #555 !important;
+}
+
+.cast-button.cast-supported {
+    display: inline-flex !important;
+}
+
+.cast-button.cast-active {
+    color: #1e90ff !important;
+    border-color: #1e90ff !important;
+    background-color: rgba(30, 144, 255, 0.1) !important;
+    box-shadow: 0 0 8px rgba(30, 144, 255, 0.25);
+}
+
+.cast-button.cast-active .cast-status-text {
+    display: inline !important;
+    color: #1e90ff !important;
+}
+
+.cast-icon {
+    transition: transform 0.2s ease;
+}
+
+.cast-button:hover .cast-icon {
+    transform: scale(1.08);
+}
+
+/* 投屏连接中：波纹动画（模拟信号发送） */
+.cast-button.cast-active .cast-icon-wave-1,
+.cast-button.cast-active .cast-icon-wave-2,
+.cast-button.cast-active .cast-icon-wave-3 {
+    transform-origin: 1px 24px;
+    animation: castWave 1.5s ease-in-out infinite;
+}
+
+.cast-button.cast-active .cast-icon-wave-1 { animation-delay: 0s; }
+.cast-button.cast-active .cast-icon-wave-2 { animation-delay: 0.15s; }
+.cast-button.cast-active .cast-icon-wave-3 { animation-delay: 0.3s; }
+
+@keyframes castWave {
+    0%, 100% {
+        opacity: 0.6;
+        transform: scaleX(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scaleX(1.12);
+    }
+}
+
+@media (max-width: 640px) {
+    .cast-button .cast-status-text { display: none !important; }
+    .cast-button { min-width: 38px; padding: 6px 8px !important; }
+}
+

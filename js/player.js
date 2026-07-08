@@ -416,6 +416,9 @@ function initializePageContent() {
             clearInterval(waitForVideo);
         }
     }, 200);
+
+    // 投屏功能初始化
+    initCastSupport();
 }
 
 // 处理键盘快捷键
@@ -608,40 +611,60 @@ function getLowestHlsLevelIndex(hls) {
     }, 0);
 }
 
-/** 点播 HLS：极限缓冲 + 分片预取（不限制内存/流量） */
+/** 点播 HLS：保守缓冲 + 灵敏码率自适应，避免低端设备 GC/内存卡顿 */
 function buildVodHlsConfig() {
+    const isMobileOrTv = /Android|Mobile|iPhone|iPad|TV|box|iPod/i.test(navigator.userAgent || '');
+    const maxBufferLen = isMobileOrTv ? 60 : 150;
+    const maxMaxBufferLen = isMobileOrTv ? 180 : 300;
+    const backBufferLen = isMobileOrTv ? 30 : 90;
+    const maxBufferBytes = isMobileOrTv ? 160 * 1024 * 1024 : 320 * 1024 * 1024;
+    const defaultEstimate = isMobileOrTv ? 3_500_000 : 6_000_000;
+    const abrEwmaFast = isMobileOrTv ? 2.0 : 3.0;
+    const abrEwmaSlow = isMobileOrTv ? 6.0 : 9.0;
+
     return {
         debug: false,
         loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
         enableWorker: true,
+        enableSoftwareAES: true,
         lowLatencyMode: false,
         startFragPrefetch: true,
-        backBufferLength: Infinity,
-        maxBufferLength: 600,
-        maxMaxBufferLength: 7200,
-        maxBufferSize: 2 * 1024 * 1024 * 1024,
-        maxBufferHole: 0.2,
-        maxStarvationDelay: 8,
-        maxLoadingDelay: 8,
+        backBufferLength: backBufferLen,
+        maxBufferLength: maxBufferLen,
+        maxMaxBufferLength: maxMaxBufferLen,
+        maxBufferSize: maxBufferBytes,
+        maxBufferHole: 0.5,
+        maxStarvationDelay: 4,
+        maxLoadingDelay: 4,
         maxFragLookUpTolerance: 0.25,
         nudgeOffset: 0.05,
         nudgeMaxRetry: 20,
-        fragLoadingMaxRetry: 12,
-        fragLoadingMaxRetryTimeout: 120000,
-        fragLoadingRetryDelay: 200,
-        manifestLoadingMaxRetry: 8,
-        manifestLoadingRetryDelay: 200,
-        levelLoadingMaxRetry: 10,
-        levelLoadingRetryDelay: 200,
+        fragLoadingMaxRetry: 8,
+        fragLoadingMaxRetryTimeout: 30000,
+        fragLoadingRetryDelay: 300,
+        manifestLoadingMaxRetry: 6,
+        manifestLoadingRetryDelay: 300,
+        levelLoadingMaxRetry: 8,
+        levelLoadingRetryDelay: 300,
         startLevel: 0,
-        testBandwidth: false,
-        abrEwmaDefaultEstimate: 50000000,
-        abrBandWidthFactor: 0.99,
-        abrBandWidthUpFactor: 0.99,
+        testBandwidth: true,
+        capLevelToPlayerSize: true,
+        capLevelOnFPSDrop: true,
+        fpsDropPeriod: 2.0,
+        fpsDropLevelCapping: 1,
+        abrEwmaDefaultEstimate: defaultEstimate,
+        abrEwmaFastLive: abrEwmaFast,
+        abrEwmaSlowLive: abrEwmaSlow,
+        abrBandWidthFactor: 0.85,
+        abrBandWidthUpFactor: 0.6,
         abrMaxWithRealBitrate: true,
         stretchShortVideoTrack: true,
-        appendErrorMaxRetry: 12,
-        liveDurationInfinity: false
+        appendErrorMaxRetry: 8,
+        liveDurationInfinity: false,
+        progressive: false,
+        preferManagedMediaSource: typeof window !== 'undefined' && 'ManagedMediaSource' in (window || {}),
+        highBufferWatchdogPeriod: 2,
+        bufferHoleMaxHole: 0.2
     };
 }
 
@@ -1534,6 +1557,11 @@ function playEpisode(index) {
 
     // 三秒后保存到历史记录
     setTimeout(() => saveToHistory(), 3000);
+
+    // 同步最新媒体信息到投屏
+    if (typeof castSyncMediaInfo === 'function') {
+        setTimeout(castSyncMediaInfo, 500);
+    }
 }
 
 // 播放上一集
@@ -2532,3 +2560,247 @@ async function switchToResource(sourceKey, vodId) {
         hideLoading();
     }
 }
+
+/* =========================================================
+ * 投屏到电视功能模块（AndroidCast Bridge 对接）
+ * ========================================================= */
+(function () {
+    let castSupported = false;
+    let castActive = false;
+    let castDeviceName = '';
+    let lastSyncState = null;
+    let syncTimer = null;
+    let attachTimer = null;
+
+    function hasAndroidCast() {
+        return typeof window !== 'undefined'
+            && window.AndroidCast
+            && typeof window.AndroidCast.isSupported === 'function';
+    }
+
+    function getCastButton() {
+        return document.getElementById('castButton');
+    }
+
+    function refreshCastButtonUI() {
+        const btn = getCastButton();
+        if (!btn) return;
+        if (castSupported) {
+            btn.classList.add('cast-supported');
+        } else {
+            btn.classList.remove('cast-supported');
+        }
+        if (castActive) {
+            btn.classList.add('cast-active');
+            const title = castDeviceName
+                ? ('正在投屏到：' + castDeviceName + '（点击断开）')
+                : '正在投屏（点击断开）';
+            btn.setAttribute('title', title);
+            btn.setAttribute('aria-label', title);
+        } else {
+            btn.classList.remove('cast-active');
+            btn.setAttribute('title', '投屏到电视');
+            btn.setAttribute('aria-label', '投屏到电视');
+        }
+    }
+
+    function applyCastStatusFromJava(statusObj) {
+        if (!statusObj) return;
+        castSupported = !!statusObj.supported;
+        castActive = !!statusObj.active;
+        castDeviceName = statusObj.deviceName || '';
+        refreshCastButtonUI();
+    }
+
+    function queryCastStatus() {
+        if (!hasAndroidCast()) return;
+        try {
+            const raw = window.AndroidCast.getStatus();
+            if (!raw) return;
+            try {
+                const obj = JSON.parse(raw);
+                applyCastStatusFromJava(obj);
+            } catch (e) {
+                console.warn('解析投屏状态失败:', e);
+            }
+        } catch (e) {
+            console.warn('读取投屏状态失败:', e);
+        }
+    }
+
+    function getCurrentMediaPoster() {
+        try {
+            const key = 'currentSourcePoster';
+            const poster = localStorage.getItem(key);
+            if (poster && (poster.startsWith('http://') || poster.startsWith('https://') || poster.startsWith('data:'))) {
+                return poster;
+            }
+        } catch (e) {}
+        try {
+            const historyRaw = localStorage.getItem('viewingHistory');
+            if (historyRaw) {
+                const list = JSON.parse(historyRaw) || [];
+                const item = list.find(it => it && it.title === currentVideoTitle);
+                if (item && item.poster) return item.poster;
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    function castSyncMediaInfo() {
+        if (!castSupported || !hasAndroidCast()) return;
+        try {
+            const title = (typeof currentVideoTitle === 'string' && currentVideoTitle)
+                ? currentVideoTitle
+                : (typeof document !== 'undefined' && document.title) || 'LibreTV';
+            const url = (typeof currentVideoUrl === 'string' && currentVideoUrl) ? currentVideoUrl : '';
+            const poster = getCurrentMediaPoster();
+            const duration = (art && typeof art.duration === 'number' && !isNaN(art.duration) && art.duration > 0) ? art.duration : 0;
+            const position = (art && typeof art.currentTime === 'number' && !isNaN(art.currentTime)) ? Math.max(0, art.currentTime) : 0;
+            const isPlaying = !!(art && art.video && !art.video.paused && !art.video.ended && art.isPlaying);
+            window.AndroidCast.setMediaInfo(title, url, poster, duration, position, isPlaying);
+            lastSyncState = { position: position, playing: isPlaying, ts: Date.now() };
+        } catch (e) {
+            console.warn('投屏媒体信息同步失败:', e);
+        }
+    }
+
+    function castSyncPlaybackState(immediate) {
+        if (!castSupported || !hasAndroidCast()) return;
+        if (!castActive && !immediate) return;
+        try {
+            const position = (art && typeof art.currentTime === 'number' && !isNaN(art.currentTime)) ? Math.max(0, art.currentTime) : 0;
+            const isPlaying = !!(art && art.video && !art.video.paused && !art.video.ended && art.isPlaying);
+            if (!immediate && lastSyncState
+                && Math.abs((lastSyncState.position || 0) - position) < 0.9
+                && !!lastSyncState.playing === !!isPlaying) {
+                return; // 状态变化太小，节流跳过
+            }
+            window.AndroidCast.setPlaybackState(position, isPlaying);
+            lastSyncState = { position: position, playing: isPlaying, ts: Date.now() };
+        } catch (e) {
+            console.warn('投屏播放状态同步失败:', e);
+        }
+    }
+
+    function openCastFlow() {
+        if (!castSupported || !hasAndroidCast()) {
+            showToast('当前环境不支持投屏', 'warning');
+            return;
+        }
+        if (castActive) {
+            if (confirm(castDeviceName
+                ? ('当前正在投屏到「' + castDeviceName + '」，是否断开投屏？')
+                : '是否断开投屏？')) {
+                try { window.AndroidCast.stopCasting(); } catch (e) {}
+                castActive = false;
+                castDeviceName = '';
+                refreshCastButtonUI();
+            }
+            return;
+        }
+        try {
+            castSyncMediaInfo();
+            window.AndroidCast.openCastDialog();
+        } catch (e) {
+            console.error('打开投屏选择器失败:', e);
+            showToast('打开投屏选择器失败', 'error');
+        }
+    }
+
+    function attachArtPlayerEvents() {
+        if (!art || !art.video) return false;
+        const v = art.video;
+        const syncState = () => castSyncPlaybackState(true);
+        v.addEventListener('play', () => { castSyncMediaInfo(); syncState(); });
+        v.addEventListener('playing', syncState);
+        v.addEventListener('pause', syncState);
+        v.addEventListener('seeked', syncState);
+        v.addEventListener('waiting', syncState);
+        v.addEventListener('ratechange', syncState);
+        v.addEventListener('timeupdate', function () {
+            castSyncPlaybackState(false);
+        });
+        if (typeof art.on === 'function') {
+            try {
+                art.on('ready', () => { castSyncMediaInfo(); syncState(); });
+                art.on('video:loadedmetadata', () => { castSyncMediaInfo(); syncState(); });
+                art.on('destroy', () => { if (syncTimer) { clearInterval(syncTimer); syncTimer = null; } });
+                art.on('error', syncState);
+            } catch (e) {}
+        }
+        castSyncMediaInfo();
+        syncState();
+        return true;
+    }
+
+    function ensureArtPlayerAttached() {
+        if (attachTimer) clearInterval(attachTimer);
+        attachTimer = setInterval(() => {
+            if (attachArtPlayerEvents()) {
+                if (attachTimer) { clearInterval(attachTimer); attachTimer = null; }
+            }
+        }, 300);
+        setTimeout(() => {
+            if (attachTimer) { clearInterval(attachTimer); attachTimer = null; }
+        }, 15000);
+    }
+
+    function bindCastButton() {
+        const btn = getCastButton();
+        if (!btn) return;
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            openCastFlow();
+        });
+    }
+
+    window.initCastSupport = function () {
+        try {
+            castSupported = hasAndroidCast();
+            if (!castSupported) {
+                const btn = getCastButton();
+                if (btn) btn.classList.add('hidden');
+                return;
+            }
+            bindCastButton();
+            queryCastStatus();
+            refreshCastButtonUI();
+
+            try {
+                window.addEventListener('caststatuschange', function (evt) {
+                    const detail = (evt && (evt.detail || (typeof window.__lastCastStatus !== 'undefined' && window.__lastCastStatus))) || null;
+                    if (detail) {
+                        applyCastStatusFromJava(detail);
+                        if (detail.active) castSyncMediaInfo();
+                    }
+                });
+            } catch (e) {}
+
+            try {
+                window.__onCastStatusChange = function (status) {
+                    applyCastStatusFromJava(status);
+                    window.__lastCastStatus = status;
+                    if (status && status.active) castSyncMediaInfo();
+                };
+            } catch (e) {}
+
+            ensureArtPlayerAttached();
+
+            if (!syncTimer) {
+                syncTimer = setInterval(() => {
+                    queryCastStatus();
+                    castSyncPlaybackState(false);
+                }, 2000);
+            }
+
+            setTimeout(() => { castSyncMediaInfo(); }, 800);
+        } catch (e) {
+            console.error('投屏功能初始化失败:', e);
+        }
+    };
+
+    window.castSyncMediaInfo = castSyncMediaInfo;
+    window.castSyncPlaybackState = castSyncPlaybackState;
+})();
