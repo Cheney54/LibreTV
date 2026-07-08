@@ -10,10 +10,11 @@ android {
         applicationId "com.libretv.android"
         minSdk 23
         targetSdk 35
-        versionCode 7
-        versionName "1.4.1"
-        // 由 publish-android-release.ps1 写入 releases/update-check-url.txt 后，重新打包即生效
-        def updateCheckUrl = "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/app-update.json"
+        versionCode 8
+        versionName "1.4.2"
+        // 主通道走 jsDelivr（全球 CDN + 大陆节点，无 GitHub Raw 429 限流）
+        // update-check-url.txt 存在时覆盖（publish-android-release.ps1 会写入）
+        def updateCheckUrl = "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/app-update.json"
         def updateUrlFile = file("${rootProject.projectDir}/releases/update-check-url.txt")
         if (updateUrlFile.exists()) {
             updateCheckUrl = updateUrlFile.text.trim()

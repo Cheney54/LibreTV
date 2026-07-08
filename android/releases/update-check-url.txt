@@ -1,1 +1,1 @@
-﻿https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/app-update.json
+https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/app-update.json

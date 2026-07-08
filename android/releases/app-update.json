@@ -1,12 +1,11 @@
 {
-    "versionCode":  7,
-    "versionName":  "1.4.1",
-    "apkUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.1.apk",
-    "fallbackUrl":  "https://github.com/Cheney54/LibreTV/releases/download/v1.4.1/libretv-1.4.1.apk",
-    "apkSize":  8931895,
-    "sha256":  "3b943940ae3f000981911b7988a6cb9a3e14045b28f2c6b65479386ee0cc2100",
-    "changelog":  "修复「检查更新不弹窗」问题：手动检查时3种结果（有更新/没更新/失败）都有明确对话框或Toast；启动自动检查失败时轻提示；手动检查不写入暂不更新skipVersion；新增「没有新的包」对话框明确告知用户当前最新版本号",
+    "versionCode":  8,
+    "versionName":  "1.4.2",
+    "apkUrl":  "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/libretv-1.4.2.apk",
+    "fallbackUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.2.apk",
+    "apkSize":  8931900,
+    "sha256":  "0fdb399caa0834b74f22d86704d34ac1d00f11f59f626cf9c9d48c58982ad3ce",
+    "changelog":  "解决 APK 主下载 429 限流问题：主下载通道与更新 JSON 通道从 GitHub Raw 切换至 jsDelivr CDN（全球节点+大陆加速，不再受 GitHub Raw 429 限流影响）；备用地址保留 GitHub Raw；启动检查失败时短 Toast 提示；手动检查 3 种结果（有新/没新/失败）明确对话框或 Toast",
     "forceUpdate":  false,
     "minVersionCode":  3
 }
-

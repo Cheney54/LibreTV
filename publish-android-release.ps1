@@ -29,9 +29,10 @@ function Get-GitHubUrls {
     if (-not $branch) { $branch = "main" }
     $tag = git -C $Root describe --tags --exact-match 2>$null
     return @{
-        RawBase    = "https://raw.githubusercontent.com/$owner/$repo/$branch"
+        RawBase     = "https://raw.githubusercontent.com/$owner/$repo/$branch"
+        JsDelivrBase= "https://cdn.jsdelivr.net/gh/$owner/$repo@$branch"
         ReleaseBase = "https://github.com/$owner/$repo/releases/download"
-        Tag        = $tag
+        Tag         = $tag
     }
 }
 
@@ -66,11 +67,16 @@ $sha256 = (Get-FileHash -Path $apkDest -Algorithm SHA256).Hash.ToLowerInvariant(
 
 $urls = Get-GitHubUrls
 $rawBase = $urls.RawBase
-$jsonUrl = "$rawBase/android/releases/app-update.json"
-$apkUrl = "$rawBase/android/releases/$apkName"
-$fallbackUrl = ""
+$jsDelivrBase = $urls.JsDelivrBase
+# 主通道：jsDelivr CDN（全球 + 大陆节点，无 GitHub Raw 429 限流）
+$jsonUrl = "$jsDelivrBase/android/releases/app-update.json"
+$apkUrl  = "$jsDelivrBase/android/releases/$apkName"
+# 备用：Raw GitHub（当 jsDelivr 失败时回退）
+$fallbackUrl = "$rawBase/android/releases/$apkName"
+# 第三备（可选）：GitHub Releases（需要先打 tag 并创建 Release）
+$ghReleaseUrl = ""
 if ($urls.Tag) {
-    $fallbackUrl = "$($urls.ReleaseBase)/$($urls.Tag)/$apkName"
+    $ghReleaseUrl = "$($urls.ReleaseBase)/$($urls.Tag)/$apkName"
 }
 
 $update = [ordered]@{
