@@ -194,7 +194,6 @@ input[type="button"], input[type="submit"], input[type="reset"],
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     transform: translateZ(0);
-    will-change: transform, box-shadow;
 }
 
 .btn:hover, .btn-secondary:hover {
@@ -401,7 +400,6 @@ button, .card-hover {
     backdrop-filter: blur(12px) saturate(130%);
     -webkit-backdrop-filter: blur(12px) saturate(130%);
     transform: translateZ(0);
-    will-change: transform, box-shadow;
 }
 
 .card-hover::before {
@@ -1530,5 +1528,23 @@ body {
     #modal .detail-desc-content {
         max-height: 6rem;
         font-size: 0.8rem;
+    }
+}
+
+/* ==================== P1-2.1: prefers-reduced-motion (系统无障碍减少动画) ==================== */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+    .card-hover, button, .btn, .episode-btn, .settings-panel,
+    .cast-button, .resource-switch-btn, .player-container > .relative {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+    .cast-button.cast-connecting {
+        animation: none !important;
     }
 }

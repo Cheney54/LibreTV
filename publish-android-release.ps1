@@ -1,9 +1,10 @@
-# Build APK, copy to android/releases/, update app-update.json for Git-hosted updates
+﻿# Build APK, copy to android/releases/, update app-update.json for Git-hosted updates
 param(
     [string]$Changelog = "Bug fixes and improvements",
     [switch]$ForceUpdate,
     [int]$MinVersionCode = 3,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$ForceBump
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,19 +43,45 @@ function Read-AppVersion {
     $code = [int]$Matches[1]
     if ($text -notmatch 'versionName\s+"([^"]+)"') { throw "Cannot parse versionName" }
     $name = $Matches[1]
+    if ($code -le 0) { throw "versionCode must be > 0 (got $code)" }
+    if ([string]::IsNullOrWhiteSpace($name)) { throw "versionName is empty" }
     return @{ Code = $code; Name = $name }
 }
 
-if (-not $SkipBuild) {
-    & (Join-Path $Root "build-android-apk.ps1")
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+function Read-LastPublishedVersion {
+    $jsonPath = Join-Path $ReleasesDir "app-update.json"
+    if (-not (Test-Path $jsonPath)) { return 0 }
+    try {
+        $obj = Get-Content $jsonPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        if ($obj -and $obj.versionCode) { return [int]$obj.versionCode }
+    } catch {}
+    return 0
 }
 
 $ver = Read-AppVersion
-$apkSrc = Join-Path $Root "android\app\build\outputs\apk\debug\app-debug.apk"
-if (-not (Test-Path $apkSrc)) {
-    throw "APK not found: $apkSrc"
+$lastCode = Read-LastPublishedVersion
+if ($lastCode -gt 0 -and $ver.Code -le $lastCode -and -not $ForceBump) {
+    throw "versionCode $($ver.Code) 未超过已发布版本 $lastCode。请在 $GradleFile 中递增 versionCode，或使用 -ForceBump 覆盖。"
 }
+
+if (-not $SkipBuild) {
+    & (Join-Path $Root "build-android-apk.ps1") -Release
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+$apkRelease = Join-Path $Root "android\app\build\outputs\apk\release\app-release.apk"
+$apkDebug = Join-Path $Root "android\app\build\outputs\apk\debug\app-debug.apk"
+$apkSrc = $null
+$apkFlavor = $null
+if (Test-Path $apkRelease) {
+    $apkSrc = $apkRelease; $apkFlavor = "release"
+} elseif (Test-Path $apkDebug) {
+    $apkSrc = $apkDebug; $apkFlavor = "debug"
+    Write-Warning "未找到 release APK，回退使用 debug APK（仅用于测试）"
+} else {
+    throw "未找到 APK 文件。请先运行 build-android-apk.ps1 -Release"
+}
+Write-Host ("[publish] 使用 {0} APK ({1:N2} MB)" -f $apkFlavor, ((Get-Item $apkSrc).Length / 1MB)) -ForegroundColor Cyan
 
 New-Item -ItemType Directory -Force -Path $ReleasesDir | Out-Null
 $apkName = "libretv-$($ver.Name).apk"
@@ -63,6 +90,10 @@ Copy-Item -Force $apkSrc $apkDest
 
 $apkItem = Get-Item $apkDest
 $apkSize = $apkItem.Length
+$apkSizeMb = [math]::Round($apkSize / 1MB, 2)
+if ($apkSizeMb -lt 3) {
+    throw "APK 尺寸异常小: ${apkSizeMb}MB，可能构建失败。请检查 build.gradle (minifyEnabled/shrinkResources)。"
+}
 $sha256 = (Get-FileHash -Path $apkDest -Algorithm SHA256).Hash.ToLowerInvariant()
 
 $urls = Get-GitHubUrls
@@ -96,9 +127,9 @@ $jsonPath = Join-Path $ReleasesDir "app-update.json"
 $jsonUrl | Set-Content -Path $UpdateUrlFile -Encoding UTF8 -NoNewline
 
 Write-Host ""
-Write-Host "Release files ready:"
-Write-Host "  APK:       android/releases/$apkName"
-Write-Host "  Size:      $apkSize bytes ($([math]::Round($apkSize/1MB,2)) MB)"
+Write-Host "Release files ready:" -ForegroundColor Green
+Write-Host "  APK:       android/releases/$apkName ($apkFlavor, $apkSizeMb MB)"
+Write-Host "  Size:      $apkSize bytes"
 Write-Host "  SHA256:    $sha256"
 Write-Host "  JSON:      android/releases/app-update.json"
 Write-Host "  Check URL: $jsonUrl"

@@ -11,10 +11,17 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import android.webkit.JavascriptInterface;
 import android.webkit.MimeTypeMap;
 import android.webkit.WebChromeClient;
@@ -37,6 +44,7 @@ import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.cache.Cache;
+import androidx.media3.datasource.cache.CacheDataSink;
 import androidx.media3.datasource.cache.CacheDataSource;
 import androidx.media3.datasource.cache.CacheEvictor;
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
@@ -241,10 +249,60 @@ public class MainActivity extends Activity {
                 CacheEvictor evictor = new LeastRecentlyUsedCacheEvictor(VIDEO_CACHE_MAX_BYTES);
                 sVideoDiskCache = new SimpleCache(cacheDir, evictor);
             } catch (Throwable t) {
+                recursiveDeleteDir(new File(getCacheDir(), "exoplayer_vod"));
                 sVideoDiskCache = null;
             }
         }
         return sVideoDiskCache;
+    }
+
+    private static void recursiveDeleteDir(File dir) {
+        if (dir == null || !dir.exists()) return;
+        if (dir.isDirectory()) {
+            File[] children = dir.listFiles();
+            if (children != null) {
+                for (File c : children) recursiveDeleteDir(c);
+            }
+        }
+        try { dir.delete(); } catch (Throwable ignore) {}
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
+    private CacheDataSink.Factory buildCacheWriteSinkFactory() {
+        return new CacheDataSink.Factory()
+            .setCache((sVideoDiskCache != null) ? sVideoDiskCache : getVideoDiskCache())
+            .setFragmentSize(CacheDataSink.DEFAULT_FRAGMENT_SIZE);
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
+    private DataSource.Factory buildCachedDsfWithHeaders(Map<String, String> perPlayHeaders) {
+        Cache diskCache = getVideoDiskCache();
+        Map<String, String> merged = new HashMap<>();
+        merged.put("User-Agent", USER_AGENT);
+        merged.put("Accept", "*/*");
+        merged.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        merged.put("Connection", "keep-alive");
+        if (perPlayHeaders != null) merged.putAll(perPlayHeaders);
+        DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+            .setUserAgent(USER_AGENT)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(30_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
+            .setDefaultRequestProperties(merged);
+        DataSource.Factory upstream = new DefaultDataSource.Factory(this, httpFactory);
+        if (diskCache != null) {
+            return new CacheDataSource.Factory()
+                .setCache(diskCache)
+                .setUpstreamDataSourceFactory(upstream)
+                .setCacheReadDataSourceFactory(new DefaultDataSource.Factory(this))
+                .setCacheWriteDataSinkFactory(new CacheDataSink.Factory()
+                    .setCache(diskCache)
+                    .setFragmentSize(CacheDataSink.DEFAULT_FRAGMENT_SIZE))
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR | CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS)
+                .setUpstreamPriority(C.PRIORITY_PLAYBACK);
+        }
+        return upstream;
     }
 
     @OptIn(markerClass = UnstableApi.class)
@@ -305,7 +363,10 @@ public class MainActivity extends Activity {
                 .setCache(diskCache)
                 .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
                 .setCacheReadDataSourceFactory(new DefaultDataSource.Factory(this))
-                .setCacheWriteDataSinkFactory(null)
+                .setCacheWriteDataSinkFactory(new CacheDataSink.Factory()
+                    .setCache(diskCache)
+                    .setFragmentSize(CacheDataSink.DEFAULT_FRAGMENT_SIZE))
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR | CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS)
                 .setUpstreamPriority(C.PRIORITY_PLAYBACK);
         } else {
             cachedDataSourceFactory = upstreamDataSourceFactory;
@@ -389,14 +450,39 @@ public class MainActivity extends Activity {
     }
 
     private void enterImmersiveMode() {
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        );
+        Window window = getWindow();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsControllerCompat insetsController = WindowCompat.getInsetsController(window, window.getDecorView());
+                if (insetsController != null) {
+                    insetsController.hide(WindowInsetsCompat.Type.systemBars());
+                    insetsController.setSystemBarsBehavior(
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    );
+                }
+                WindowCompat.setDecorFitsSystemWindows(window, false);
+            } else {
+                window.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                );
+            }
+        } catch (Throwable ignore) {
+            try {
+                window.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                );
+            } catch (Throwable ignore2) {}
+        }
     }
 
     @Override
@@ -423,6 +509,56 @@ public class MainActivity extends Activity {
                 return true;
             }
         }
+        if (nativePlayer != null && nativePlayerView != null
+            && nativePlayerView.getVisibility() == View.VISIBLE) {
+            try {
+                long dur = nativePlayer.getDuration();
+                boolean isVod = dur != C.TIME_UNSET && dur > 0;
+                switch (keyCode) {
+                    case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                    case KeyEvent.KEYCODE_SPACE:
+                    case KeyEvent.KEYCODE_DPAD_CENTER:
+                    case KeyEvent.KEYCODE_ENTER:
+                    case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                        if (nativePlayer.isPlaying()) nativePlayer.pause();
+                        else nativePlayer.play();
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PLAY:
+                        nativePlayer.play();
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                        nativePlayer.pause();
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_STOP:
+                        nativePlayer.stop();
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                    case KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD:
+                    case KeyEvent.KEYCODE_BUTTON_R1:
+                        if (isVod) {
+                            long next = nativePlayer.getCurrentPosition() + 10_000L;
+                            nativePlayer.seekTo(Math.min(dur, next));
+                        }
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_REWIND:
+                    case KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD:
+                    case KeyEvent.KEYCODE_BUTTON_L1:
+                        if (isVod) {
+                            long prev = Math.max(0L, nativePlayer.getCurrentPosition() - 10_000L);
+                            nativePlayer.seekTo(prev);
+                        }
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_NEXT:
+                    case KeyEvent.KEYCODE_CHANNEL_UP:
+                        nativePlayer.seekToNextMediaItem();
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                    case KeyEvent.KEYCODE_CHANNEL_DOWN:
+                        nativePlayer.seekToPreviousMediaItem();
+                        return true;
+                }
+            } catch (Throwable ignore) {}
+        }
         return super.onKeyDown(keyCode, event);
     }
 
@@ -432,13 +568,34 @@ public class MainActivity extends Activity {
         if (nativePlayerView != null) {
             try { nativePlayerView.setControllerOnFullScreenModeChangedListener(null); } catch (Throwable ignore) {}
             try { nativePlayerView.setPlayer(null); } catch (Throwable ignore) {}
+            try {
+                ViewParent p = nativePlayerView.getParent();
+                if (p instanceof ViewGroup) ((ViewGroup) p).removeView(nativePlayerView);
+            } catch (Throwable ignore) {}
+            nativePlayerView = null;
         }
         if (nativePlayer != null) {
             try { nativePlayer.removeListener(nativePlayerListener); } catch (Throwable ignore) {}
+            try { nativePlayer.stop(); } catch (Throwable ignore) {}
+            try { nativePlayer.clearMediaItems(); } catch (Throwable ignore) {}
             nativePlayer.release();
             nativePlayer = null;
         }
+        loadErrorPolicy = null;
+        trackSelector = null;
+        bandwidthMeter = null;
+        upstreamDataSourceFactory = null;
+        cachedDataSourceFactory = null;
+        trackSelectorParams = null;
+        nativePlayerListener = null;
         releaseCast();
+        if (customView != null) {
+            try {
+                if (chromeClient != null) chromeClient.onHideCustomView();
+            } catch (Throwable ignore) {}
+            customView = null;
+            chromeClient = null;
+        }
         try {
             if (webView != null) {
                 webView.stopLoading();
@@ -602,18 +759,14 @@ public class MainActivity extends Activity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void playNativeUrl(String url) {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", USER_AGENT);
-        headers.put("Accept", "*/*");
-        headers.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
-        headers.put("Connection", "keep-alive");
+        Map<String, String> perPlay = new HashMap<>();
         String referer = originFor(url);
         if (referer != null && !referer.isEmpty()) {
-            headers.put("Referer", referer);
+            perPlay.put("Referer", referer);
         }
         String origin = originFor(url);
         if (origin != null && !origin.isEmpty()) {
-            headers.put("Origin", origin);
+            perPlay.put("Origin", origin);
         }
 
         MediaItem.Builder itemBuilder = new MediaItem.Builder()
@@ -623,36 +776,7 @@ public class MainActivity extends Activity {
         }
         MediaItem mediaItem = itemBuilder.build();
 
-        DataSource.Factory playDsf;
-        Cache diskCache = getVideoDiskCache();
-        if (diskCache != null) {
-            final Map<String, String> finalHeaders = headers;
-            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
-                .setUserAgent(USER_AGENT)
-                .setConnectTimeoutMs(20_000)
-                .setReadTimeoutMs(30_000)
-                .setAllowCrossProtocolRedirects(true)
-                .setKeepPostFor302Redirects(true)
-                .setDefaultRequestProperties(finalHeaders);
-            DataSource.Factory upstream = new DefaultDataSource.Factory(this, httpFactory);
-            playDsf = new CacheDataSource.Factory()
-                .setCache(diskCache)
-                .setUpstreamDataSourceFactory(upstream)
-                .setCacheReadDataSourceFactory(new DefaultDataSource.Factory(this))
-                .setCacheWriteDataSinkFactory(null)
-                .setUpstreamPriority(C.PRIORITY_PLAYBACK);
-        } else {
-            final Map<String, String> finalHeaders2 = headers;
-            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
-                .setUserAgent(USER_AGENT)
-                .setConnectTimeoutMs(20_000)
-                .setReadTimeoutMs(30_000)
-                .setAllowCrossProtocolRedirects(true)
-                .setKeepPostFor302Redirects(true)
-                .setDefaultRequestProperties(finalHeaders2);
-            playDsf = new DefaultDataSource.Factory(this, httpFactory);
-        }
-
+        DataSource.Factory playDsf = buildCachedDsfWithHeaders(perPlay);
         DefaultMediaSourceFactory playMsf = new DefaultMediaSourceFactory(this)
             .setDataSourceFactory(playDsf);
 
@@ -669,7 +793,6 @@ public class MainActivity extends Activity {
         if (nativeLiveUrl == null || nativeRetryCount >= 8) {
             return;
         }
-
         nativeRetryCount++;
         final int rc = nativeRetryCount;
         long delayMs = rc <= 1 ? 300L
@@ -677,16 +800,15 @@ public class MainActivity extends Activity {
                     : rc <= 3 ? 2_000L
                     : rc <= 4 ? 5_000L
                     : Math.min(30_000L, 1_000L * (1L << Math.min(rc - 4, 5)));
-
+        final String urlRetry = nativeLiveUrl;
         nativePlayerView.postDelayed(() -> {
-            if (nativePlayerView.getVisibility() != View.VISIBLE || nativeLiveUrl == null || nativePlayer == null) {
+            if (nativePlayerView.getVisibility() != View.VISIBLE || urlRetry == null || nativePlayer == null) {
                 return;
             }
             try {
-                nativePlayer.prepare();
-                nativePlayer.play();
+                playNativeUrl(urlRetry);
             } catch (Throwable t) {
-                playNativeUrl(nativeLiveUrl);
+                Toast.makeText(this, "点播恢复失败：" + t.getMessage(), Toast.LENGTH_SHORT).show();
             }
         }, delayMs);
     }
@@ -836,7 +958,7 @@ public class MainActivity extends Activity {
                 try { builderClz.getMethod("setSessionActivity", PendingIntent.class).invoke(builder, pi); } catch (Throwable ignore) {}
                 try { builderClz.getMethod("setId", String.class).invoke(builder, "LibreTVCastSession"); } catch (Throwable ignore) {}
                 try { builderClz.getMethod("setCallback", Class.forName("androidx.media3.session.MediaSession$Callback"))
-                        .invoke(builder, null); } catch (Throwable ignore) {}
+                        .invoke(builder, (Object[]) null); } catch (Throwable ignore) {}
                 mediaSession = (MediaSession) builderClz.getMethod("build").invoke(builder);
             } catch (Throwable t1) {
                 try {
@@ -876,10 +998,56 @@ public class MainActivity extends Activity {
                 if (nativePlayer != null) {
                     try { mediaSession.setPlayer(nativePlayer); } catch (Throwable ignore) {}
                 }
+                String title = castMediaTitle;
+                String poster = castMediaPoster;
+                long durationMs = castMediaDurationMs;
+                if ((title != null && !title.isEmpty()) || (poster != null && !poster.isEmpty()) || durationMs > 0) {
+                    try {
+                        Class<?> metaBuilderClz = Class.forName("androidx.media3.common.MediaMetadata$Builder");
+                        Object builder = metaBuilderClz.getConstructor().newInstance();
+                        if (title != null && !title.isEmpty()) {
+                            try {
+                                metaBuilderClz.getMethod("setTitle", CharSequence.class)
+                                    .invoke(builder, title);
+                            } catch (Throwable ignore) {}
+                        }
+                        if (durationMs > 0) {
+                            try {
+                                metaBuilderClz.getMethod("setSubtitle", CharSequence.class)
+                                    .invoke(builder, formatDuration(durationMs));
+                            } catch (Throwable ignore) {}
+                        }
+                        if (poster != null && !poster.isEmpty()) {
+                            try {
+                                metaBuilderClz.getMethod("setArtworkUri", Uri.class)
+                                    .invoke(builder, Uri.parse(poster));
+                            } catch (Throwable ignore) {}
+                        }
+                        Object metadata = metaBuilderClz.getMethod("build").invoke(builder);
+                        Object playerObj = mediaSession;
+                        if (nativePlayer != null) {
+                            try {
+                                java.lang.reflect.Method mm = nativePlayer.getClass().getMethod("setMediaMetadata",
+                                    Class.forName("androidx.media3.common.MediaMetadata"));
+                                mm.invoke(nativePlayer, metadata);
+                            } catch (Throwable ignore) {}
+                        }
+                    } catch (Throwable ignore) {}
+                }
             }
         } catch (Throwable t) {
             t.printStackTrace();
         }
+    }
+
+    private static String formatDuration(long durationMs) {
+        if (durationMs <= 0) return "";
+        long s = durationMs / 1000;
+        long h = s / 3600;
+        long m = (s % 3600) / 60;
+        s = s % 60;
+        if (h > 0) return String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, s);
+        return String.format(java.util.Locale.US, "%d:%02d", m, s);
     }
 
     private void updateMediaSessionPlaybackState() {
@@ -1057,30 +1225,54 @@ public class MainActivity extends Activity {
             return textResponse(400, "text/plain", "Invalid proxy URL");
         }
 
-        HttpURLConnection connection = (HttpURLConnection) new URL(targetUrl).openConnection();
-        connection.setInstanceFollowRedirects(true);
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(45000);
-        connection.setUseCaches(false);
-        connection.setRequestProperty("User-Agent", USER_AGENT);
-        connection.setRequestProperty("Accept", "*/*");
-        connection.setRequestProperty("Connection", "keep-alive");
-        connection.setRequestProperty("Referer", originFor(targetUrl));
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(targetUrl).openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(45000);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("User-Agent", USER_AGENT);
+            connection.setRequestProperty("Accept", "*/*");
+            connection.setRequestProperty("Connection", "keep-alive");
+            connection.setRequestProperty("Referer", originFor(targetUrl));
 
-        int statusCode = connection.getResponseCode();
-        InputStream input = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        if (input == null) {
-            input = new ByteArrayInputStream(new byte[0]);
+            int statusCode = connection.getResponseCode();
+            InputStream input = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            if (input == null) {
+                input = new ByteArrayInputStream(new byte[0]);
+            }
+
+            String contentType = connection.getContentType();
+            if (isM3u8(targetUrl, contentType)) {
+                String content = readUtf8(input);
+                String processed = processM3u8(targetUrl, content);
+                closeQuietly(input);
+                return new WebResourceResponse("application/vnd.apple.mpegurl", "UTF-8", statusCode, "OK", corsHeaders(), stringStream(processed));
+            }
+
+            byte[] bodyBytes = readAllBytes(input);
+            closeQuietly(input);
+            return new WebResourceResponse(contentTypeOrDefault(contentType), null, statusCode, "OK", corsHeaders(), new ByteArrayInputStream(bodyBytes));
+        } finally {
+            if (connection != null) {
+                try { connection.disconnect(); } catch (Throwable ignore) {}
+            }
         }
+    }
 
-        String contentType = connection.getContentType();
-        if (isM3u8(targetUrl, contentType)) {
-            String content = readUtf8(input);
-            String processed = processM3u8(targetUrl, content);
-            return new WebResourceResponse("application/vnd.apple.mpegurl", "UTF-8", statusCode, "OK", corsHeaders(), stringStream(processed));
+    private static void closeQuietly(java.io.Closeable c) {
+        try { if (c != null) c.close(); } catch (Throwable ignore) {}
+    }
+
+    private static byte[] readAllBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.max(8192, input.available()));
+        byte[] buffer = new byte[32768];
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            output.write(buffer, 0, read);
         }
-
-        return new WebResourceResponse(contentTypeOrDefault(contentType), null, statusCode, "OK", corsHeaders(), input);
+        return output.toByteArray();
     }
 
     private String processM3u8(String targetUrl, String content) {
@@ -1240,9 +1432,12 @@ public class MainActivity extends Activity {
 
     private Map<String, String> corsHeaders() {
         Map<String, String> headers = new HashMap<>();
-        headers.put("Access-Control-Allow-Origin", "*");
-        headers.put("Access-Control-Allow-Headers", "*");
-        headers.put("Access-Control-Allow-Methods", "GET, OPTIONS");
+        headers.put("Access-Control-Allow-Origin", LOCAL_ORIGIN);
+        headers.put("Access-Control-Allow-Credentials", "true");
+        headers.put("Access-Control-Allow-Headers", "Content-Type, Authorization, Range, Accept, User-Agent, X-Requested-With");
+        headers.put("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        headers.put("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+        headers.put("Vary", "Origin");
         headers.put("Cache-Control", "no-store");
         return headers;
     }

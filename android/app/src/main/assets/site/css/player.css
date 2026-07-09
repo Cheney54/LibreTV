@@ -269,7 +269,7 @@ div.player-loading-text {
 @media screen and (-webkit-min-device-pixel-ratio: 0) {
     .art-video-player video {
         transform: translateZ(0) !important;
-        will-change: transform !important;
+        transform: none !important;
     }
 
     /* Force visibility of video element */
@@ -500,7 +500,6 @@ input:checked + .slider:before {
     backdrop-filter: blur(10px) saturate(130%);
     -webkit-backdrop-filter: blur(10px) saturate(130%);
     transform: translateZ(0);
-    will-change: transform, box-shadow;
     box-shadow:
         0 1px 3px rgba(0, 0, 0, 0.35),
         0 0 0 1px rgba(255, 255, 255, 0.03) inset;
@@ -691,7 +690,6 @@ video:fullscreen {
 .episode-btn,
 .player-container button:not(.cast-button):not(.resource-switch-btn):not(.art- *) {
     transform: translateZ(0);
-    will-change: transform, box-shadow;
     transition: transform var(--dur-fast, 0.15s) var(--ease-out, ease),
                 background-color var(--dur-base, 0.25s) var(--ease-out, ease),
                 border-color var(--dur-base, 0.25s) var(--ease-out, ease),
@@ -731,7 +729,6 @@ video:fullscreen {
     backdrop-filter: blur(10px) saturate(120%);
     -webkit-backdrop-filter: blur(10px) saturate(120%);
     transform: translateZ(0);
-    will-change: transform, box-shadow;
     transition: transform var(--dur-fast, 0.15s) var(--ease-out, ease),
                 background-color var(--dur-base, 0.25s) var(--ease-out, ease),
                 border-color var(--dur-base, 0.25s) var(--ease-out, ease),
@@ -871,3 +868,21 @@ video:fullscreen {
     .cast-button { min-width: 38px; padding: 6px 8px !important; }
 }
 
+
+/* ==================== P1-2.1: prefers-reduced-motion (系统无障碍减少动画) ==================== */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+    .card-hover, button, .btn, .episode-btn, .settings-panel,
+    .cast-button, .resource-switch-btn, .player-container > .relative {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+    .cast-button.cast-connecting {
+        animation: none !important;
+    }
+}

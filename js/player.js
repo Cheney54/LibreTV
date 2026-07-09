@@ -1,7 +1,49 @@
 const selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '[]');
 const customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
-// 改进返回功能
+const _boundPlayerVideoEvents = new WeakSet();
+const _shortcutLastTrigger = new Map();
+let _qualitySearchAbort = null;
+
+function safeLocalStorageSet(key, value) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (e) {
+        if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
+            try { lruCleanupLocalStorage(); } catch (ignore) {}
+            try { localStorage.setItem(key, value); return true; } catch (ignore2) {}
+        }
+        return false;
+    }
+}
+
+function lruCleanupLocalStorage() {
+    const removablePrefixes = ['videoProgress_', 'poster_', 'qualityProbe_', 'viewingHistory'];
+    const candidates = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (removablePrefixes.some(p => k === p || k.startsWith(p))) {
+            let ts = 0;
+            try {
+                const raw = localStorage.getItem(k) || '{}';
+                try { const j = JSON.parse(raw); if (j && typeof j.timestamp === 'number') ts = j.timestamp; } catch (_) {}
+                if (ts === 0 && k.startsWith('poster_')) { ts = 1; }
+            } catch (_) {}
+            candidates.push({ k, ts, size: (localStorage.getItem(k) || '').length });
+        }
+    }
+    candidates.sort((a, b) => a.ts - b.ts);
+    const removeTarget = Math.min(candidates.length, Math.max(2, Math.floor(candidates.length * 0.4)));
+    for (let i = 0; i < removeTarget; i++) {
+        try { localStorage.removeItem(candidates[i].k); } catch (_) {}
+    }
+    if (candidates.length === 0) {
+        try { localStorage.removeItem('viewingHistory'); } catch (_) {}
+    }
+}
+
 function goBack(event) {
     // 防止默认链接行为
     if (event) event.preventDefault();
@@ -58,7 +100,7 @@ function goBack(event) {
 window.addEventListener('load', function () {
     // 保存前一页面URL
     if (document.referrer && document.referrer !== window.location.href) {
-        localStorage.setItem('lastPageUrl', document.referrer);
+        safeLocalStorageSet('lastPageUrl', document.referrer);
     }
 
     // 提取当前URL中的重要参数，以便在需要时能够恢复当前页面
@@ -68,8 +110,8 @@ window.addEventListener('load', function () {
 
     if (videoId && sourceCode) {
         // 保存当前播放状态，以便其他页面可以返回
-        localStorage.setItem('currentPlayingId', videoId);
-        localStorage.setItem('currentPlayingSource', sourceCode);
+        safeLocalStorageSet('currentPlayingId', videoId);
+        safeLocalStorageSet('currentPlayingSource', sourceCode);
     }
 });
 
@@ -332,7 +374,7 @@ function initializePageContent() {
     // 监听自动连播开关变化
     document.getElementById('autoplayToggle').addEventListener('change', function (e) {
         autoplayEnabled = e.target.checked;
-        localStorage.setItem('autoplayEnabled', autoplayEnabled);
+        safeLocalStorageSet('autoplayEnabled', autoplayEnabled);
     });
 
     // 优先使用URL传递的集数信息，否则从localStorage获取
@@ -421,8 +463,15 @@ function initializePageContent() {
     });
 
     // 视频暂停时也保存
+    let _waitForVideoAttempts = 0;
     const waitForVideo = setInterval(() => {
-        if (art && art.video) {
+        _waitForVideoAttempts++;
+        if (_waitForVideoAttempts > 75) { // 200ms * 75 = 15s 超时
+            clearInterval(waitForVideo);
+            return;
+        }
+        if (art && art.video && !_boundPlayerVideoEvents.has(art.video)) {
+            _boundPlayerVideoEvents.add(art.video);
             art.video.addEventListener('pause', saveCurrentProgress);
 
             // 新增：播放进度变化时节流保存
@@ -448,12 +497,19 @@ function handleKeyboardShortcuts(e) {
     // 忽略输入框中的按键事件
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
+    // 浏览器自动长按重复去重（避免集数切换爆炸）
+    if (e.repeat) {
+        const lastT = _shortcutLastTrigger.get(e.key + '|' + (e.altKey ? 'alt' : '')) || 0;
+        if (Date.now() - lastT < 180) return;
+    }
+
     // Alt + 左箭头 = 上一集
     if (e.altKey && e.key === 'ArrowLeft') {
         if (currentEpisodeIndex > 0) {
             playPreviousEpisode();
             showShortcutHint('上一集', 'left');
             e.preventDefault();
+            _shortcutLastTrigger.set('ArrowLeft|alt', Date.now());
         }
     }
 
@@ -463,6 +519,7 @@ function handleKeyboardShortcuts(e) {
             playNextEpisode();
             showShortcutHint('下一集', 'right');
             e.preventDefault();
+            _shortcutLastTrigger.set('ArrowRight|alt', Date.now());
         }
     }
 
@@ -487,7 +544,7 @@ function handleKeyboardShortcuts(e) {
     // 上箭头 = 音量+
     if (e.key === 'ArrowUp') {
         if (art && art.volume < 1) {
-            art.volume += 0.1;
+            art.volume = Math.min(1, art.volume + 0.1);
             showShortcutHint('音量+', 'up');
             e.preventDefault();
         }
@@ -496,7 +553,7 @@ function handleKeyboardShortcuts(e) {
     // 下箭头 = 音量-
     if (e.key === 'ArrowDown') {
         if (art && art.volume > 0) {
-            art.volume -= 0.1;
+            art.volume = Math.max(0, art.volume - 0.1);
             showShortcutHint('音量-', 'down');
             e.preventDefault();
         }
@@ -831,7 +888,7 @@ function setupQualityEnhancementToggle() {
     if (presetSelect && presetSelect.dataset.bound !== 'true') {
         presetSelect.dataset.bound = 'true';
         presetSelect.addEventListener('change', function () {
-            localStorage.setItem('qualityEnhancePreset', this.value || 'natural');
+            safeLocalStorageSet('qualityEnhancePreset', this.value || 'natural');
             applyQualityEnhancement();
             if (art && art.notice) {
                 art.notice.show = `画质预设：${this.options[this.selectedIndex].textContent}`;
@@ -973,7 +1030,7 @@ async function updateGlfxEnhancement(shouldEnable) {
                     .update();
             } catch (error) {
                 stopGlfxEnhancement();
-                localStorage.setItem('qualityEnhancePreset', 'sharp');
+                safeLocalStorageSet('qualityEnhancePreset', 'sharp');
                 applyQualityEnhancement();
                 if (art && art.notice) {
                     art.notice.show = 'WebGL增强不可用，已切换锐化';
@@ -986,7 +1043,7 @@ async function updateGlfxEnhancement(shouldEnable) {
 
         render();
     } catch (error) {
-        localStorage.setItem('qualityEnhancePreset', 'sharp');
+        safeLocalStorageSet('qualityEnhancePreset', 'sharp');
         applyQualityEnhancement();
         if (art && art.notice) {
             art.notice.show = 'glfx.js加载失败，已切换锐化';
@@ -1632,7 +1689,7 @@ function toggleEpisodeOrder() {
     episodesReversed = !episodesReversed;
 
     // 保存到localStorage
-    localStorage.setItem('episodesReversed', episodesReversed);
+    safeLocalStorageSet('episodesReversed', episodesReversed);
 
     // 重新渲染集数列表
     renderEpisodes();
@@ -1815,7 +1872,7 @@ function saveToHistory() {
         // 限制历史记录数量为50条
         if (history.length > 50) history.splice(50);
 
-        localStorage.setItem('viewingHistory', JSON.stringify(history));
+        safeLocalStorageSet('viewingHistory', JSON.stringify(history));
     } catch (e) {
     }
 }
@@ -1889,7 +1946,7 @@ function saveCurrentProgress() {
         timestamp: Date.now()
     };
     try {
-        localStorage.setItem(progressKey, JSON.stringify(progressData));
+        safeLocalStorageSet(progressKey, JSON.stringify(progressData));
         // --- 新增：同步更新 viewingHistory 中的进度 ---
         try {
             const historyRaw = localStorage.getItem('viewingHistory');
@@ -1909,7 +1966,7 @@ function saveCurrentProgress() {
                         history[idx].playbackPosition = currentTime;
                         history[idx].duration = duration;
                         history[idx].timestamp = Date.now();
-                        localStorage.setItem('viewingHistory', JSON.stringify(history));
+                        safeLocalStorageSet('viewingHistory', JSON.stringify(history));
                     }
                 }
             }
@@ -2190,7 +2247,7 @@ function writeCachedQualityInfo(sourceKey, vodId, value, episodeIndex = currentE
                 .forEach(key => delete cache[key]);
         }
 
-        localStorage.setItem(QUALITY_PROBE_CACHE_KEY, JSON.stringify(cache));
+        safeLocalStorageSet(QUALITY_PROBE_CACHE_KEY, JSON.stringify(cache));
     } catch (error) {
     }
 }
@@ -2339,6 +2396,11 @@ function showBetterQualityPrompt(candidate) {
 }
 
 async function findBetterQualityResource() {
+    if (_qualitySearchAbort) {
+        try { _qualitySearchAbort.abort(); } catch (_) {}
+    }
+    const ac = new AbortController();
+    _qualitySearchAbort = ac;
     const urlParams = new URLSearchParams(window.location.search);
     const currentSourceCode = urlParams.get('source') || '';
     const currentVideoId = urlParams.get('id') || '';
@@ -2366,9 +2428,26 @@ async function findBetterQualityResource() {
             return { key: sourceKey, name: '未知资源' };
         });
 
-    const candidates = await Promise.all(resourceOptions.map(async (source) => {
+    const bestSoFar = { value: null, lock: false };
+    const consider = (candidate) => {
+        if (!candidate) return;
+        if (bestSoFar.lock) return;
+        const prevScore = bestSoFar.value ? (bestSoFar.value.quality.score || 0) : -1;
+        if ((candidate.quality.score || 0) > prevScore) {
+            bestSoFar.value = candidate;
+            const need = Math.max((currentQuality.score || 0) + 500, 1080);
+            if ((candidate.quality.score || 0) >= need) {
+                bestSoFar.lock = true;
+                showBetterQualityPrompt(candidate);
+            }
+        }
+    };
+
+    await Promise.all(resourceOptions.map(async (source) => {
         try {
+            if (ac.signal.aborted) return null;
             const queryResult = await searchByAPIAndKeyWord(source.key, currentVideoTitle);
+            if (ac.signal.aborted) return null;
             if (!queryResult || queryResult.length === 0) return null;
 
             let result = queryResult[0];
@@ -2378,24 +2457,28 @@ async function findBetterQualityResource() {
                 }
             });
 
+            if (ac.signal.aborted) return null;
             const quality = await getResourceQualityInfo(source.key, result.vod_id);
-            return {
+            if (ac.signal.aborted) return null;
+            const candidate = {
                 sourceKey: source.key,
                 sourceName: source.name,
                 vodId: result.vod_id,
                 quality
             };
+            consider(candidate);
+            return candidate;
         } catch (error) {
             return null;
         }
     }));
 
-    const best = candidates
-        .filter(Boolean)
-        .sort((a, b) => (b.quality.score || 0) - (a.quality.score || 0))[0];
-
-    if (best && (best.quality.score || 0) >= Math.max((currentQuality.score || 0) + 500, 1080)) {
-        showBetterQualityPrompt(best);
+    if (ac.signal.aborted) return;
+    if (!bestSoFar.lock && bestSoFar.value) {
+        const best = bestSoFar.value;
+        if ((best.quality.score || 0) >= Math.max((currentQuality.score || 0) + 500, 1080)) {
+            showBetterQualityPrompt(best);
+        }
     }
 }
 
@@ -2576,11 +2659,11 @@ async function switchToResource(sourceKey, vodId) {
         
         // 保存当前状态到localStorage
         try {
-            localStorage.setItem('currentVideoTitle', data.vod_name || '未知视频');
-            localStorage.setItem('currentEpisodes', JSON.stringify(data.episodes));
-            localStorage.setItem('currentEpisodeIndex', targetIndex);
-            localStorage.setItem('currentSourceCode', sourceKey);
-            localStorage.setItem('lastPlayTime', Date.now());
+            safeLocalStorageSet('currentVideoTitle', data.vod_name || '未知视频');
+            safeLocalStorageSet('currentEpisodes', JSON.stringify(data.episodes));
+            safeLocalStorageSet('currentEpisodeIndex', targetIndex);
+            safeLocalStorageSet('currentSourceCode', sourceKey);
+            safeLocalStorageSet('lastPlayTime', Date.now());
         } catch (e) {
             console.error('保存播放状态失败:', e);
         }

@@ -40,7 +40,7 @@ public final class UpdateChecker {
                     try {
                         if (activity.isFinishing() || activity.isDestroyed()) return;
                         Toast.makeText(activity.getApplicationContext(),
-                            "更新检查失败（GitHub 限流 / 网络不稳定），稍后将自动重试",
+                            "更新检查失败，请稍后重试",
                             Toast.LENGTH_SHORT).show();
                     } catch (Throwable ignore) {}
                 });
@@ -74,10 +74,10 @@ public final class UpdateChecker {
                     try {
                         if (activity.isFinishing() || activity.isDestroyed()) return;
                         Toast.makeText(activity,
-                            "无法获取更新信息：网络不可用 / GitHub 限流（429）/ 当前网络需稍后重试",
+                            "更新检查失败，请检查网络后重试",
                             Toast.LENGTH_LONG).show();
                     } catch (Throwable ignore) {}
-                    callback.onResult(false, "无法获取更新信息：可能网络不可用，或 GitHub 访问限流（429），请稍后再试");
+                    callback.onResult(false, "更新检查失败，请检查网络后重试");
                 });
                 return;
             }
@@ -153,7 +153,7 @@ public final class UpdateChecker {
         }
         String msg = "当前已是最新版本\n" +
             "版本号：" + BuildConfig.VERSION_NAME + "（" + BuildConfig.VERSION_CODE + "）\n" +
-            "更新服务器：GitHub Raw + Releases 双通道";
+            "更新服务器：jsDelivr CDN（主） + GitHub Raw（备） 双通道";
         new AlertDialog.Builder(activity)
             .setTitle("没有新的包")
             .setMessage(msg)
@@ -170,7 +170,7 @@ public final class UpdateChecker {
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
             .setTitle("更新失败")
-            .setMessage("下载未完成，可能是 GitHub 临时限流或当前网络不稳定。\n可稍后重试，或切换到备用下载地址。")
+            .setMessage("下载未完成，可能是当前网络不稳定或 CDN 节点临时异常。\n可稍后重试，或切换到备用下载地址。")
             .setPositiveButton("重试", (d, w) -> ApkUpdateDownloader.start(
                 activity, apkUrl, fallbackUrl, versionName, versionCode, forceUpdate, apkSize, sha256));
         if (!forceUpdate) {
@@ -262,8 +262,11 @@ public final class UpdateChecker {
         StringBuilder sb = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
             String line;
+            boolean first = true;
             while ((line = reader.readLine()) != null) {
+                if (!first) sb.append('\n');
                 sb.append(line);
+                first = false;
             }
         }
         return sb.toString();
