@@ -72,6 +72,7 @@ import androidx.mediarouter.media.MediaRouter;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -1219,18 +1220,22 @@ public class MainActivity extends Activity {
         return new WebResourceResponse(mimeTypeFor(normalized), "UTF-8", 200, "OK", corsHeaders(), input);
     }
 
-    private WebResourceResponse proxyRequest(String encodedTarget) throws IOException {
-        String targetUrl = URLDecoder.decode(encodedTarget, "UTF-8");
+    private WebResourceResponse proxyRequest(String encodedTarget) {
+        String targetUrl;
+        try {
+            targetUrl = URLDecoder.decode(encodedTarget, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return textResponse(400, "text/plain", "Invalid URL encoding");
+        }
         if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
             return textResponse(400, "text/plain", "Invalid proxy URL");
         }
 
-        HttpURLConnection connection = null;
         try {
-            connection = (HttpURLConnection) new URL(targetUrl).openConnection();
+            HttpURLConnection connection = (HttpURLConnection) new URL(targetUrl).openConnection();
             connection.setInstanceFollowRedirects(true);
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(45000);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(60000);
             connection.setUseCaches(false);
             connection.setRequestProperty("User-Agent", USER_AGENT);
             connection.setRequestProperty("Accept", "*/*");
@@ -1238,24 +1243,60 @@ public class MainActivity extends Activity {
             connection.setRequestProperty("Referer", originFor(targetUrl));
 
             int statusCode = connection.getResponseCode();
+            String contentType = connection.getContentType();
+
+            if (isM3u8(targetUrl, contentType)) {
+                InputStream input = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                try {
+                    String content = readUtf8(input);
+                    String processed = processM3u8(targetUrl, content);
+                    return new WebResourceResponse("application/vnd.apple.mpegurl", "UTF-8", statusCode, "OK", corsHeaders(), stringStream(processed));
+                } finally {
+                    closeQuietly(input);
+                    connection.disconnect();
+                }
+            }
+
             InputStream input = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
             if (input == null) {
-                input = new ByteArrayInputStream(new byte[0]);
+                connection.disconnect();
+                return new WebResourceResponse(contentTypeOrDefault(contentType), null, statusCode, "OK", corsHeaders(), new ByteArrayInputStream(new byte[0]));
             }
 
-            String contentType = connection.getContentType();
-            if (isM3u8(targetUrl, contentType)) {
-                String content = readUtf8(input);
-                String processed = processM3u8(targetUrl, content);
-                closeQuietly(input);
-                return new WebResourceResponse("application/vnd.apple.mpegurl", "UTF-8", statusCode, "OK", corsHeaders(), stringStream(processed));
-            }
+            InputStream wrappedInput = new ProxyInputStream(input, connection);
 
-            byte[] bodyBytes = readAllBytes(input);
-            closeQuietly(input);
-            return new WebResourceResponse(contentTypeOrDefault(contentType), null, statusCode, "OK", corsHeaders(), new ByteArrayInputStream(bodyBytes));
-        } finally {
-            if (connection != null) {
+            WebResourceResponse response = new WebResourceResponse(
+                contentTypeOrDefault(contentType),
+                null,
+                statusCode,
+                statusCode >= 400 ? connection.getResponseMessage() : "OK",
+                corsHeaders(),
+                wrappedInput
+            );
+
+            return response;
+
+        } catch (IOException e) {
+            return textResponse(502, "text/plain", "Proxy error: " + e.getMessage());
+        }
+    }
+
+    private static class ProxyInputStream extends FilterInputStream {
+        private final HttpURLConnection connection;
+        private volatile boolean closed = false;
+
+        ProxyInputStream(InputStream in, HttpURLConnection connection) {
+            super(in);
+            this.connection = connection;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) return;
+            closed = true;
+            try {
+                super.close();
+            } finally {
                 try { connection.disconnect(); } catch (Throwable ignore) {}
             }
         }

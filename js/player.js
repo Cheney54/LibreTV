@@ -693,11 +693,12 @@ function getLowestHlsLevelIndex(hls) {
 /** 点播 HLS：保守缓冲 + 灵敏码率自适应，避免低端设备 GC/内存卡顿 */
 function buildVodHlsConfig() {
     const isMobileOrTv = /Android|Mobile|iPhone|iPad|TV|box|iPod/i.test(navigator.userAgent || '');
-    const maxBufferLen = isMobileOrTv ? 60 : 150;
-    const maxMaxBufferLen = isMobileOrTv ? 180 : 300;
+    const isAndroidWebView = /Android.*Version\/.*Chrome|wv|LibreTV/i.test(navigator.userAgent || '');
+    const maxBufferLen = isMobileOrTv ? 90 : 150;
+    const maxMaxBufferLen = isMobileOrTv ? 240 : 300;
     const backBufferLen = isMobileOrTv ? 30 : 90;
-    const maxBufferBytes = isMobileOrTv ? 160 * 1024 * 1024 : 320 * 1024 * 1024;
-    const defaultEstimate = isMobileOrTv ? 3_500_000 : 6_000_000;
+    const maxBufferBytes = isMobileOrTv ? 200 * 1024 * 1024 : 320 * 1024 * 1024;
+    const defaultEstimate = isAndroidWebView ? 1_500_000 : (isMobileOrTv ? 3_500_000 : 6_000_000);
     const abrEwmaFast = isMobileOrTv ? 2.0 : 3.0;
     const abrEwmaSlow = isMobileOrTv ? 6.0 : 9.0;
 
@@ -705,7 +706,7 @@ function buildVodHlsConfig() {
         debug: false,
         loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
         enableWorker: true,
-        enableSoftwareAES: true,
+        enableSoftwareAES: false,
         lowLatencyMode: false,
         startFragPrefetch: true,
         backBufferLength: backBufferLen,
@@ -734,14 +735,14 @@ function buildVodHlsConfig() {
         abrEwmaDefaultEstimate: defaultEstimate,
         abrEwmaFastLive: abrEwmaFast,
         abrEwmaSlowLive: abrEwmaSlow,
-        abrBandWidthFactor: 0.85,
-        abrBandWidthUpFactor: 0.6,
+        abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.5,
         abrMaxWithRealBitrate: true,
         stretchShortVideoTrack: true,
         appendErrorMaxRetry: 8,
         liveDurationInfinity: false,
         progressive: false,
-        preferManagedMediaSource: typeof window !== 'undefined' && 'ManagedMediaSource' in (window || {}),
+        preferManagedMediaSource: false,
         highBufferWatchdogPeriod: 2,
         bufferHoleMaxHole: 0.2
     };
@@ -760,7 +761,7 @@ function destroyNextEpisodePrefetch() {
     }
 }
 
-/** 后台预拉下一集 m3u8 与分片，切集更快 */
+/** 后台预拉下一集 m3u8 清单，切集更快；仅 manifest，不分片，不抢主播放带宽 */
 function prefetchNextEpisode() {
     destroyNextEpisodePrefetch();
     const nextIndex = currentEpisodeIndex + 1;
@@ -772,8 +773,16 @@ function prefetchNextEpisode() {
         return;
     }
 
+    const isAndroidWebView = /Android.*Version\/.*Chrome|wv|LibreTV/i.test(navigator.userAgent || '');
+    const prefetchFragCount = isAndroidWebView ? 0 : 1;
+
     try {
         const cfg = buildVodHlsConfig();
+        cfg.maxBufferLength = 1;
+        cfg.maxMaxBufferLength = 2;
+        cfg.maxBufferSize = 8 * 1024 * 1024;
+        cfg.backBufferLength = 0;
+        cfg.startLevel = -1;
         const hls = new Hls(cfg);
         nextEpisodePrefetchHls = hls;
         hls.loadSource(nextUrl);
@@ -783,7 +792,14 @@ function prefetchNextEpisode() {
             if (low > -1) {
                 hls.currentLevel = low;
             }
-            hls.startLoad(0);
+            if (prefetchFragCount > 0) {
+                hls.startLoad(0);
+            }
+        });
+        hls.on(Hls.Events.FRAG_LOADED, function (_, data) {
+            if (data && data.frag && data.frag.sn >= prefetchFragCount - 1) {
+                try { hls.stopLoad(); } catch (e) {}
+            }
         });
         hls.on(Hls.Events.ERROR, function (_, data) {
             if (data.fatal) {
