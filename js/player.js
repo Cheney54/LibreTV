@@ -26,12 +26,14 @@ function lruCleanupLocalStorage() {
         if (!k) continue;
         if (removablePrefixes.some(p => k === p || k.startsWith(p))) {
             let ts = 0;
+            let size = 0;
             try {
                 const raw = localStorage.getItem(k) || '{}';
+                size = raw.length;
                 try { const j = JSON.parse(raw); if (j && typeof j.timestamp === 'number') ts = j.timestamp; } catch (_) {}
                 if (ts === 0 && k.startsWith('poster_')) { ts = 1; }
             } catch (_) {}
-            candidates.push({ k, ts, size: (localStorage.getItem(k) || '').length });
+            candidates.push({ k, ts, size });
         }
     }
     candidates.sort((a, b) => a.ts - b.ts);
@@ -694,13 +696,13 @@ function getLowestHlsLevelIndex(hls) {
 function buildVodHlsConfig() {
     const isMobileOrTv = /Android|Mobile|iPhone|iPad|TV|box|iPod/i.test(navigator.userAgent || '');
     const isAndroidWebView = /Android.*Version\/.*Chrome|wv|LibreTV/i.test(navigator.userAgent || '');
-    const maxBufferLen = isMobileOrTv ? 90 : 150;
-    const maxMaxBufferLen = isMobileOrTv ? 240 : 300;
-    const backBufferLen = isMobileOrTv ? 30 : 90;
-    const maxBufferBytes = isMobileOrTv ? 200 * 1024 * 1024 : 320 * 1024 * 1024;
-    const defaultEstimate = isAndroidWebView ? 1_500_000 : (isMobileOrTv ? 3_500_000 : 6_000_000);
-    const abrEwmaFast = isMobileOrTv ? 2.0 : 3.0;
-    const abrEwmaSlow = isMobileOrTv ? 6.0 : 9.0;
+    const maxBufferLen = isMobileOrTv ? 120 : 150;
+    const maxMaxBufferLen = isMobileOrTv ? 300 : 300;
+    const backBufferLen = isMobileOrTv ? 45 : 90;
+    const maxBufferBytes = isMobileOrTv ? 256 * 1024 * 1024 : 320 * 1024 * 1024;
+    const defaultEstimate = isAndroidWebView ? 3_000_000 : (isMobileOrTv ? 4_000_000 : 6_000_000);
+    const abrEwmaFast = isMobileOrTv ? 3.0 : 3.0;
+    const abrEwmaSlow = isMobileOrTv ? 9.0 : 9.0;
 
     return {
         debug: false,
@@ -714,18 +716,18 @@ function buildVodHlsConfig() {
         maxMaxBufferLength: maxMaxBufferLen,
         maxBufferSize: maxBufferBytes,
         maxBufferHole: 0.5,
-        maxStarvationDelay: 4,
-        maxLoadingDelay: 4,
+        maxStarvationDelay: 5,
+        maxLoadingDelay: 5,
         maxFragLookUpTolerance: 0.25,
         nudgeOffset: 0.05,
         nudgeMaxRetry: 20,
-        fragLoadingMaxRetry: 8,
-        fragLoadingMaxRetryTimeout: 30000,
-        fragLoadingRetryDelay: 300,
-        manifestLoadingMaxRetry: 6,
-        manifestLoadingRetryDelay: 300,
-        levelLoadingMaxRetry: 8,
-        levelLoadingRetryDelay: 300,
+        fragLoadingMaxRetry: 10,
+        fragLoadingMaxRetryTimeout: 40000,
+        fragLoadingRetryDelay: 400,
+        manifestLoadingMaxRetry: 8,
+        manifestLoadingRetryDelay: 400,
+        levelLoadingMaxRetry: 10,
+        levelLoadingRetryDelay: 400,
         startLevel: 0,
         testBandwidth: true,
         capLevelToPlayerSize: true,
@@ -735,11 +737,11 @@ function buildVodHlsConfig() {
         abrEwmaDefaultEstimate: defaultEstimate,
         abrEwmaFastLive: abrEwmaFast,
         abrEwmaSlowLive: abrEwmaSlow,
-        abrBandWidthFactor: 0.8,
-        abrBandWidthUpFactor: 0.5,
+        abrBandWidthFactor: 0.85,
+        abrBandWidthUpFactor: 0.6,
         abrMaxWithRealBitrate: true,
         stretchShortVideoTrack: true,
-        appendErrorMaxRetry: 8,
+        appendErrorMaxRetry: 10,
         liveDurationInfinity: false,
         progressive: false,
         preferManagedMediaSource: false,
@@ -774,7 +776,7 @@ function prefetchNextEpisode() {
     }
 
     const isAndroidWebView = /Android.*Version\/.*Chrome|wv|LibreTV/i.test(navigator.userAgent || '');
-    const prefetchFragCount = isAndroidWebView ? 0 : 1;
+    const prefetchFragCount = isAndroidWebView ? 2 : 3;
 
     try {
         const cfg = buildVodHlsConfig();
@@ -1178,6 +1180,7 @@ function initPlayer(videoUrl) {
 
                 video.addEventListener('waiting', function onWaiting() {
                     if (video.paused || !hls) {
+                        video.removeEventListener('waiting', onWaiting);
                         return;
                     }
                     let ahead = 0;
@@ -1963,32 +1966,34 @@ function saveCurrentProgress() {
     };
     try {
         safeLocalStorageSet(progressKey, JSON.stringify(progressData));
-        // --- 新增：同步更新 viewingHistory 中的进度 ---
-        try {
-            const historyRaw = localStorage.getItem('viewingHistory');
-            if (historyRaw) {
-                const history = JSON.parse(historyRaw);
-                // 用 title + 集数索引唯一标识
-                const idx = history.findIndex(item =>
-                    item.title === currentVideoTitle &&
-                    (item.episodeIndex === undefined || item.episodeIndex === currentEpisodeIndex)
-                );
-                if (idx !== -1) {
-                    // 只在进度有明显变化时才更新，减少写入
-                    if (
-                        Math.abs((history[idx].playbackPosition || 0) - currentTime) > 2 ||
-                        Math.abs((history[idx].duration || 0) - duration) > 2
-                    ) {
-                        history[idx].playbackPosition = currentTime;
-                        history[idx].duration = duration;
-                        history[idx].timestamp = Date.now();
-                        safeLocalStorageSet('viewingHistory', JSON.stringify(history));
+    } catch (e) {}
+
+    // 异步更新 viewingHistory 中的进度，避免阻塞主线程
+    if (currentVideoTitle !== undefined && currentEpisodeIndex !== undefined) {
+        setTimeout(() => {
+            try {
+                const historyRaw = localStorage.getItem('viewingHistory');
+                if (historyRaw) {
+                    const history = JSON.parse(historyRaw);
+                    const idx = history.findIndex(item =>
+                        item.title === currentVideoTitle &&
+                        (item.episodeIndex === undefined || item.episodeIndex === currentEpisodeIndex)
+                    );
+                    if (idx !== -1) {
+                        // 只在进度有明显变化时才更新，减少写入
+                        if (
+                            Math.abs((history[idx].playbackPosition || 0) - currentTime) > 2 ||
+                            Math.abs((history[idx].duration || 0) - duration) > 2
+                        ) {
+                            history[idx].playbackPosition = currentTime;
+                            history[idx].duration = duration;
+                            history[idx].timestamp = Date.now();
+                            safeLocalStorageSet('viewingHistory', JSON.stringify(history));
+                        }
                     }
                 }
-            }
-        } catch (e) {
-        }
-    } catch (e) {
+            } catch (e) {}
+        }, 0);
     }
 }
 

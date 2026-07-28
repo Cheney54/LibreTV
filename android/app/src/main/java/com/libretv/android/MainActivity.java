@@ -122,7 +122,7 @@ public class MainActivity extends Activity {
     private boolean castMediaIsPlaying;
     private androidx.mediarouter.media.MediaRouter.RouteInfo selectedCastRoute;
 
-    private static final long VIDEO_CACHE_MAX_BYTES = 512L * 1024 * 1024;
+    private static final long VIDEO_CACHE_MAX_BYTES = 1024L * 1024 * 1024;
     private static Cache sVideoDiskCache;
     private DefaultTrackSelector trackSelector;
     private DefaultTrackSelector.Parameters trackSelectorParams;
@@ -205,6 +205,10 @@ public class MainActivity extends Activity {
         // 3) 让 HTML viewport meta 生效（content="width=device-width, initial-scale=1, user-scalable=no, maximum-scale=1"）
         try { settings.setNeedInitialFocus(true); } catch (Throwable ignore) {}
         try { settings.setOffscreenPreRaster(true); } catch (Throwable ignore) {}
+        // 4) 启用硬件加速渲染，提升视频播放性能
+        try { settings.setRenderPriority(WebSettings.RenderPriority.HIGH); } catch (Throwable ignore) {}
+        try { settings.setCacheMode(WebSettings.LOAD_DEFAULT); } catch (Throwable ignore) {}
+        try { settings.setDatabaseEnabled(true); } catch (Throwable ignore) {}
 
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
@@ -286,8 +290,8 @@ public class MainActivity extends Activity {
         if (perPlayHeaders != null) merged.putAll(perPlayHeaders);
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
             .setUserAgent(USER_AGENT)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(30_000)
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(45_000)
             .setAllowCrossProtocolRedirects(true)
             .setKeepPostFor302Redirects(true)
             .setDefaultRequestProperties(merged);
@@ -309,7 +313,7 @@ public class MainActivity extends Activity {
     @OptIn(markerClass = UnstableApi.class)
     private void configureNativePlayer() {
         bandwidthMeter = new DefaultBandwidthMeter.Builder(this)
-            .setInitialBitrateEstimate(6_000_000L)
+            .setInitialBitrateEstimate(8_000_000L)
             .setResetOnNetworkTypeChange(true)
             .build();
 
@@ -333,12 +337,12 @@ public class MainActivity extends Activity {
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000,
-                60_000,
-                1_500,
-                3_000
+                30_000,
+                120_000,
+                2_500,
+                5_000
             )
-            .setBackBuffer(60_000, true)
+            .setBackBuffer(90_000, true)
             .setPrioritizeTimeOverSizeThresholds(true)
             .setTargetBufferBytes(C.LENGTH_UNSET)
             .build();
@@ -351,8 +355,8 @@ public class MainActivity extends Activity {
 
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
             .setUserAgent(USER_AGENT)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(30_000)
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(45_000)
             .setAllowCrossProtocolRedirects(true)
             .setKeepPostFor302Redirects(true)
             .setDefaultRequestProperties(baseHeaders);
@@ -373,7 +377,7 @@ public class MainActivity extends Activity {
             cachedDataSourceFactory = upstreamDataSourceFactory;
         }
 
-        loadErrorPolicy = new DefaultLoadErrorHandlingPolicy(6);
+        loadErrorPolicy = new DefaultLoadErrorHandlingPolicy(8);
 
         DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
             .setDataSourceFactory(cachedDataSourceFactory);

@@ -1,4 +1,13 @@
 // UI相关函数
+
+// HTML转义函数，防止XSS攻击
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function toggleSettings(e) {
     // 密码保护校验
     if (window.isPasswordProtected && window.isPasswordVerified) {
@@ -159,7 +168,7 @@ function saveSearchHistory(query) {
     if (!query || !query.trim()) return;
 
     // 清理输入，防止XSS
-    query = query.trim().substring(0, 50).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    query = escapeHtml(query.trim().substring(0, 50));
 
     let history = getSearchHistory();
 
@@ -382,15 +391,9 @@ function loadViewingHistory() {
 
     // 渲染历史记录
     historyList.innerHTML = history.map(item => {
-        // 防止XSS
-        const safeTitle = item.title
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-
-        const safeSource = item.sourceName ?
-            item.sourceName.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') :
-            '未知来源';
+        // 防止XSS - 统一使用转义函数
+        const safeTitle = escapeHtml(item.title);
+        const safeSource = item.sourceName ? escapeHtml(item.sourceName) : '未知来源';
 
         const episodeText = item.episodeIndex !== undefined ?
             `第${item.episodeIndex + 1}集` : '';

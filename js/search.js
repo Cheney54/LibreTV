@@ -4,8 +4,7 @@ async function searchByAPIAndKeyWord(apiId, query) {
         
         // 处理自定义API
         if (apiId.startsWith('custom_')) {
-            const customIndex = apiId.replace('custom_', '');
-            const customApi = getCustomApiInfo(customIndex);
+            const customApi = getCustomApiInfo(apiId.replace('custom_', ''));
             if (!customApi) return [];
             
             apiBaseUrl = customApi.url;
@@ -41,11 +40,12 @@ async function searchByAPIAndKeyWord(apiId, query) {
         }
         
         // 处理第一页结果
+        const customApiUrl = apiId.startsWith('custom_') ? getCustomApiInfo(apiId.replace('custom_', ''))?.url : undefined;
         const results = data.list.map(item => ({
             ...item,
             source_name: apiName,
             source_code: apiId,
-            api_url: apiId.startsWith('custom_') ? getCustomApiInfo(apiId.replace('custom_', ''))?.url : undefined
+            api_url: customApiUrl
         }));
         
         // 获取总页数
@@ -87,7 +87,7 @@ async function searchByAPIAndKeyWord(apiId, query) {
                             ...item,
                             source_name: apiName,
                             source_code: apiId,
-                            api_url: apiId.startsWith('custom_') ? getCustomApiInfo(apiId.replace('custom_', ''))?.url : undefined
+                            api_url: customApiUrl
                         }));
                     } catch (error) {
                         console.warn(`API ${apiId} 第${page}页搜索失败:`, error);
