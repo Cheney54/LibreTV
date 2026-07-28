@@ -1,11 +1,11 @@
 {
-    "versionCode":  8,
-    "versionName":  "1.4.2",
-    "apkUrl":  "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/libretv-1.4.2.apk",
-    "fallbackUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.2.apk",
-    "apkSize":  8931900,
-    "sha256":  "0fdb399caa0834b74f22d86704d34ac1d00f11f59f626cf9c9d48c58982ad3ce",
-    "changelog":  "解决 APK 主下载 429 限流问题：主下载通道与更新 JSON 通道从 GitHub Raw 切换至 jsDelivr CDN（全球节点+大陆加速，不再受 GitHub Raw 429 限流影响）；备用地址保留 GitHub Raw；启动检查失败时短 Toast 提示；手动检查 3 种结果（有新/没新/失败）明确对话框或 Toast",
+    "versionCode":  9,
+    "versionName":  "1.4.3",
+    "apkUrl":  "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/libretv-1.4.3.apk",
+    "fallbackUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.3.apk",
+    "apkSize":  8945152,
+    "sha256":  "f1b1f0a3ff1e72bd8f65770f166028e70c082f4a965bada1e7e3d87beb761af6",
+    "changelog":  "优化播放性能和代码质量：Android原生播放器优化缓冲参数、网络超时、视频缓存、带宽估计；WebView HLS播放器优化缓冲配置、ABR算法、重试机制；服务器代理增加超时和重试次数；代码性能优化localStorage、异步存储更新、统一XSS防护；修复已废弃API调用",
     "forceUpdate":  false,
     "minVersionCode":  3
 }
