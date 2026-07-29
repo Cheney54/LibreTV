@@ -122,7 +122,7 @@ public class MainActivity extends Activity {
     private boolean castMediaIsPlaying;
     private androidx.mediarouter.media.MediaRouter.RouteInfo selectedCastRoute;
 
-    private static final long VIDEO_CACHE_MAX_BYTES = 1024L * 1024 * 1024;
+    private static final long VIDEO_CACHE_MAX_BYTES = 2048L * 1024 * 1024;
     private static Cache sVideoDiskCache;
     private DefaultTrackSelector trackSelector;
     private DefaultTrackSelector.Parameters trackSelectorParams;
@@ -304,7 +304,7 @@ public class MainActivity extends Activity {
                 .setCacheWriteDataSinkFactory(new CacheDataSink.Factory()
                     .setCache(diskCache)
                     .setFragmentSize(CacheDataSink.DEFAULT_FRAGMENT_SIZE))
-                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR | CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
                 .setUpstreamPriority(C.PRIORITY_PLAYBACK);
         }
         return upstream;
@@ -337,12 +337,12 @@ public class MainActivity extends Activity {
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                30_000,
-                120_000,
-                2_500,
-                5_000
+                60_000,
+                300_000,
+                1_500,
+                3_000
             )
-            .setBackBuffer(90_000, true)
+            .setBackBuffer(120_000, true)
             .setPrioritizeTimeOverSizeThresholds(true)
             .setTargetBufferBytes(C.LENGTH_UNSET)
             .build();
@@ -371,7 +371,7 @@ public class MainActivity extends Activity {
                 .setCacheWriteDataSinkFactory(new CacheDataSink.Factory()
                     .setCache(diskCache)
                     .setFragmentSize(CacheDataSink.DEFAULT_FRAGMENT_SIZE))
-                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR | CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
                 .setUpstreamPriority(C.PRIORITY_PLAYBACK);
         } else {
             cachedDataSourceFactory = upstreamDataSourceFactory;

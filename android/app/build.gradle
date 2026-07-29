@@ -32,8 +32,8 @@ android {
         applicationId "com.libretv.android"
         minSdk 23
         targetSdk 35
-        versionCode 9
-        versionName "1.4.3"
+        versionCode 12
+        versionName "1.4.6"
         def updateCheckUrl = "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/app-update.json"
         def updateUrlFile = file("${rootProject.projectDir}/releases/update-check-url.txt")
         if (updateUrlFile.exists()) {

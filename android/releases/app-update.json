@@ -1,11 +1,11 @@
 {
-    "versionCode":  9,
-    "versionName":  "1.4.3",
-    "apkUrl":  "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/libretv-1.4.3.apk",
-    "fallbackUrl":  "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.3.apk",
-    "apkSize":  8945152,
-    "sha256":  "f1b1f0a3ff1e72bd8f65770f166028e70c082f4a965bada1e7e3d87beb761af6",
-    "changelog":  "优化播放性能和代码质量：Android原生播放器优化缓冲参数、网络超时、视频缓存、带宽估计；WebView HLS播放器优化缓冲配置、ABR算法、重试机制；服务器代理增加超时和重试次数；代码性能优化localStorage、异步存储更新、统一XSS防护；修复已废弃API调用",
-    "forceUpdate":  false,
-    "minVersionCode":  3
+    "versionCode": 12,
+    "versionName": "1.4.6",
+    "apkUrl": "https://cdn.jsdelivr.net/gh/Cheney54/LibreTV@main/android/releases/libretv-1.4.6.apk",
+    "fallbackUrl": "https://raw.githubusercontent.com/Cheney54/LibreTV/main/android/releases/libretv-1.4.6.apk",
+    "apkSize": 4497954,
+    "sha256": "84066555a3addec907f901e1f65bb5c05ba75e80a3936112a55cde75b2e4f072",
+    "changelog": "版本 1.4.6 更新说明",
+    "forceUpdate": false,
+    "minVersionCode": 3
 }

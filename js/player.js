@@ -696,10 +696,10 @@ function getLowestHlsLevelIndex(hls) {
 function buildVodHlsConfig() {
     const isMobileOrTv = /Android|Mobile|iPhone|iPad|TV|box|iPod/i.test(navigator.userAgent || '');
     const isAndroidWebView = /Android.*Version\/.*Chrome|wv|LibreTV/i.test(navigator.userAgent || '');
-    const maxBufferLen = isMobileOrTv ? 120 : 150;
-    const maxMaxBufferLen = isMobileOrTv ? 300 : 300;
-    const backBufferLen = isMobileOrTv ? 45 : 90;
-    const maxBufferBytes = isMobileOrTv ? 256 * 1024 * 1024 : 320 * 1024 * 1024;
+    const maxBufferLen = isMobileOrTv ? 180 : 200;
+    const maxMaxBufferLen = isMobileOrTv ? 600 : 600;
+    const backBufferLen = isMobileOrTv ? 60 : 90;
+    const maxBufferBytes = isMobileOrTv ? 300 * 1024 * 1024 : 400 * 1024 * 1024;
     const defaultEstimate = isAndroidWebView ? 3_000_000 : (isMobileOrTv ? 4_000_000 : 6_000_000);
     const abrEwmaFast = isMobileOrTv ? 3.0 : 3.0;
     const abrEwmaSlow = isMobileOrTv ? 9.0 : 9.0;
@@ -721,14 +721,14 @@ function buildVodHlsConfig() {
         maxFragLookUpTolerance: 0.25,
         nudgeOffset: 0.05,
         nudgeMaxRetry: 20,
-        fragLoadingMaxRetry: 10,
-        fragLoadingMaxRetryTimeout: 40000,
-        fragLoadingRetryDelay: 400,
+        fragLoadingMaxRetry: 15,
+        fragLoadingMaxRetryTimeout: 60000,
+        fragLoadingRetryDelay: 200,
         manifestLoadingMaxRetry: 8,
         manifestLoadingRetryDelay: 400,
         levelLoadingMaxRetry: 10,
         levelLoadingRetryDelay: 400,
-        startLevel: 0,
+        startLevel: -1,
         testBandwidth: true,
         capLevelToPlayerSize: true,
         capLevelOnFPSDrop: true,
@@ -737,13 +737,13 @@ function buildVodHlsConfig() {
         abrEwmaDefaultEstimate: defaultEstimate,
         abrEwmaFastLive: abrEwmaFast,
         abrEwmaSlowLive: abrEwmaSlow,
-        abrBandWidthFactor: 0.85,
-        abrBandWidthUpFactor: 0.6,
+        abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.5,
         abrMaxWithRealBitrate: true,
         stretchShortVideoTrack: true,
         appendErrorMaxRetry: 10,
         liveDurationInfinity: false,
-        progressive: false,
+        progressive: true,
         preferManagedMediaSource: false,
         highBufferWatchdogPeriod: 2,
         bufferHoleMaxHole: 0.2
@@ -1156,13 +1156,24 @@ function initPlayer(videoUrl) {
                     hideAllPlayerLoadingOverlays();
                     applyQualityEnhancement();
 
+                    // 不再立即跳到最高画质，让 ABR 根据带宽自动选择
+                    // 延迟 10 秒后尝试提升画质，确保缓冲充足
                     if (!upgradedToMaxQuality) {
                         upgradedToMaxQuality = true;
-                        const highestLevel = getHighestHlsLevelIndex(hls);
-                        if (highestLevel > -1 && hls.currentLevel !== highestLevel) {
-                            hls.currentLevel = highestLevel;
-                            updateHlsQualitySetting(hls);
-                        }
+                        setTimeout(() => {
+                            if (!hls || !video) return;
+                            const bufferedAhead = video.buffered.length > 0
+                                ? video.buffered.end(video.buffered.length - 1) - video.currentTime
+                                : 0;
+                            // 只有缓冲充足时才提升画质
+                            if (bufferedAhead > 30) {
+                                const highestLevel = getHighestHlsLevelIndex(hls);
+                                if (highestLevel > -1 && hls.currentLevel !== highestLevel) {
+                                    hls.currentLevel = highestLevel;
+                                    updateHlsQualitySetting(hls);
+                                }
+                            }
+                        }, 10000);
                     }
                     prefetchNextEpisode();
                 });
